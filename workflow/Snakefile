@@ -1,0 +1,533 @@
+import json
+import re
+from collections import OrderedDict, defaultdict
+from csv import DictReader
+from itertools import chain
+from pathlib import Path
+from subprocess import PIPE, Popen, check_call
+
+from Bio import SearchIO, SeqIO
+from Bio.SeqUtils.CheckSum import seguid
+from pset.assay import (AlignType, align_type, decode_btop, dna, is_similar,
+                        parse_assays)
+from pset.util import (argify, blastdbcmd_info, contextify, fields_8CB,
+                       iter_hsps, iter_limit, slice_aln)
+from snakemake.utils import validate
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from taxa.taxa import add_db_args, ancestors, parse_args_to_url, session_scope
+
+# setup
+
+
+def agg(wildcards):
+    Path(checkpoints.comp.get(**wildcards).output[0])
+    return list(assays[wildcards.id].components)
+
+
+validate(config, Path("schema") / "conf.yml")
+
+db = Path(config["db"])
+root = Path(config["out"]) / "{id}" / db.name
+
+argsb = list(argify(*filter(len, config.get("confb", "").split(","))))
+confb = {ele[0]: ele[1] if len(ele) > 1 else None for ele in argsb}
+argsg = list(argify(*filter(len, config.get("confg", "").split(","))))
+confg = {ele[0]: ele[1] if len(ele) > 1 else None for ele in argsg}
+argsm = list(argify(*filter(len, config.get("confm", "").split(",")), pfx="--"))
+confm = {ele[0]: ele[1] if len(ele) > 1 else None for ele in argsm}
+
+with open(config["file"]) as file:
+    assays = {ele.id: ele for ele in parse_assays(file)}
+
+
+# rules
+
+
+localrules:
+    all,
+    camp,
+    comp
+
+rule all:
+    message:
+        "all rule results"
+    input:
+        expand(str(root / "camp" / "lcl.tsv"), id=assays),
+        expand(str(root / "camp" / "sim.tsv"), id=assays),
+        expand(str(root / "camp" / "bat.txt"), id=assays),
+        expand(str(root / "camp" / "seq.fasta"), id=assays),
+        expand(str(root / "camp" / "seq.json"), id=assays),
+        # expand(str(root / "camp" / "glc.tsv"), id=assays),
+        # expand(str(root / "camp" / "aln.tsv"), id=assays),
+        expand(str(root / "camp" / "msa.fasta"), id=assays),
+        expand(str(root / "camp" / "var.tsv"), id=assays),
+        expand(str(root / "camp" / "phy.treefile"), id=assays),
+        expand(str(root / "coor.tsv"), id=assays),
+        expand(str(root / "bind.tsv"), id=assays),
+        expand(str(root / "mat.tsv"), id=assays),
+        expand(str(root / "phy-comp.txt"), id=assays)
+
+rule coor:
+    message:
+        "output component coordinates"
+    output:
+        tsv = root / "coor.tsv"
+    run:
+        with open(output.tsv, "w") as file:
+            print("comp", "start", "end", sep="\t", file=file)
+            for key, val in assays[wildcards.id].coordinates.items():
+                print(key, *val, sep="\t", file=file)
+
+rule camp:
+    message:
+        "output camplicon query sequences"
+    output:
+        amb = root / "camp" / "amb.fasta",
+        exp = root / "camp" / "exp.fasta"
+    run:
+        assay = assays[wildcards.id]
+        SeqIO.write(next(assay.records("camplicon", expand=0)), output.amb, "fasta")
+        SeqIO.write(next(assay.records("camplicon", expand=1)), output.exp, "fasta")
+
+checkpoint comp:
+    message:
+        "output component query sequences"
+    output:
+        path = directory(root / "comp")
+    run:
+        assay = assays[wildcards.id]
+        for ele in assay.records(*assay.components):
+            path = Path(output.path)
+            path.mkdir(exist_ok=True)
+            SeqIO.write(ele, path / f"{ele.id}.fasta", "fasta")
+
+rule blastn:
+    message:
+        "BLAST+ camplicon"
+    input:
+        fas = rules.camp.output.exp
+    output:
+        tsv = root / "camp" / "lcl.tsv"
+    params:
+        db = db,
+        flags = chain.from_iterable(argsb)
+    threads:
+        int(confb.get("-num_threads", "1"))
+    run:
+        info = dict(blastdbcmd_info(params.db))
+	cmd = [
+            "blastn",
+            "-query", input.fas,
+            "-db", params.db,
+            "-out", output.tsv,
+            "-outfmt", f"7 {' '.join(fields_8CB)} staxids",
+            *params.flags
+        ]
+        if "-num_alignments" not in cmd:
+            cmd = (*cmd, "-num_alignments", info["sequences"].replace(",", ""))
+        check_call(cmd)
+
+rule simcamp:
+    input:
+        amb = rules.camp.output.amb,
+        exp = rules.camp.output.exp,
+        tsv = rules.blastn.output.tsv
+    output:
+        tsv = root / "camp" / "sim.tsv",
+        txt = root / "camp" / "bat.txt"
+    params:
+        sim = config["simcamp"]
+    run:
+        assay = assays[wildcards.id]
+        ctx5 = len(assay.context5())
+        ctx3 = len(assay.context3())
+        amp = assay.amplicon()
+        amb = str(SeqIO.read(input.amb, "fasta").seq)
+        exp = str(SeqIO.read(input.exp, "fasta").seq)
+        hsps = OrderedDict()
+        sims = OrderedDict()
+        for hsp in iter_hsps(SearchIO.parse(input.tsv, "blast-tab", comments=True, fields=(*fields_8CB, "staxids"))):
+            slc = slice(hsp.query_start, hsp.query_end)
+            qaln = "".join(decode_btop(amb[slc], hsp.btop))
+            saln = "".join(decode_btop(exp[slc], hsp.btop))
+            aln = list(slice_aln(qaln, saln, hsp.query_start, ctx5, len(amb) - ctx3))
+            sim = sum(ele[0] != "-" for ele in aln) / len(amp) * sum(is_similar(*ele) for ele in aln) / len(aln) if len(aln) > 0 else 0
+            if params.sim <= sim and sims.get(hsp.hit_id, 0) < sim:
+                sims[hsp.hit_id] = sim
+                hsps[hsp.hit_id] = hsp
+        with open(output.tsv, "w") as file:
+            print("key", "val", sep="\t", file=file)
+            for key, val in sims.items():
+                print(key, val, sep="\t", file=file)
+        with open(output.txt, "w") as file:
+            for key, val in hsps.items():
+                ele = contextify(val, len(amb))
+                print(ele[0], f"{ele[1]}-{ele[2]}", ele[3], file=file)
+
+rule blastdbcmd:
+    message:
+        "extract aligned camplicon subjects"
+    input:
+        txt = rules.simcamp.output.txt
+    output:
+        fas = root / "camp" / "seq.fasta",
+        json = root / "camp" / "seq.json"
+    params:
+        db = db
+    run:
+        recs = OrderedDict()
+        maps = defaultdict(list)
+        cmd = ("blastdbcmd", "-db", params.db, "-entry_batch", input.txt, "-outfmt", ">%a\n%s")
+        with Popen(cmd, stdout=PIPE, universal_newlines=True) as proc:
+            for rec in SeqIO.parse(proc.stdout, "fasta"):
+                key = seguid(rec.seq)
+                recs[key] = recs.get(key, rec)
+                maps[key].append(rec.id)
+        SeqIO.write(recs.values(), output.fas, "fasta")
+        with open(output.json, "w") as file:
+            json.dump(maps, file, indent=4)
+            print(file=file)
+
+rule glsearch_camp:
+    message:
+        "glocal camplicon alignment"
+    input:
+        fas = rules.camp.output.amb,
+        lib = rules.blastdbcmd.output.fas
+    output:
+        tsv = root / "camp" / "glc.tsv"
+    params:
+        *chain.from_iterable(argsg)
+    threads:
+        int(confg.get("-T", "1"))
+    shell:
+        """
+        glsearch36 -n -m 8CB {params:q} {input.fas:q} {input.lib:q} | \
+            awk -F $"\t" -v OFS=$"\t" '/^#/ || !seen[$1,$2]++' > \
+            {output.tsv:q}
+        """
+
+rule glsearch_camp_aln:
+    message:
+        "camplicon alignment report"
+    input:
+        tsv = rules.glsearch_camp.output.tsv,
+        map = rules.blastdbcmd.output.json
+    output:
+        tsv = root / "camp" / "aln.tsv"
+    run:
+        with open(input.map) as file:
+            mapped = {ele[0]: ele for ele in json.load(file).values()}
+        assay = assays[wildcards.id]
+        rec = next(assay.records("camplicon", expand=0))
+        seen = set()
+        with open(output.tsv, "w") as file:
+            print("id", "query.aln", "subject.aln", "subject.seq", "is_acgt", "similarity", "nseq", sep="\t", file=file)
+            for hsp in iter_hsps(SearchIO.parse(input.tsv, "blast-tab", comments=True, fields=fields_8CB)):
+                qseq = rec.seq[hsp.query_start:hsp.query_end]
+                qseq = str(qseq if hsp.query_strand >= 0 else qseq.reverse_complement())
+                qaln = "".join(decode_btop(qseq, hsp.btop, sbj=False))
+                saln = "".join(decode_btop(qseq, hsp.btop))
+                scom = ""
+                for coor in assay.coordinates.values():
+                    aln = slice_aln(qaln, saln, hsp.query_start, *coor)
+                    scom += "".join(ele for _, ele in aln)
+                sim = sum(not (ele == "-" or ele.islower()) for ele in scom) / len(scom)
+                sseq = "".join(filter(str.isalpha, saln))
+                print(
+                    assay.id,
+                    "".join(assay.delimify(qaln, qaln)),
+                    "".join(assay.delimify(qaln, saln)),
+                    sseq,
+                    not bool(set(sseq) - dna),
+                    sim,
+                    len(mapped[hsp.hit_id]),
+                    sep="\t", file=file
+                )
+
+rule mafft_camp:
+    message:
+        "calculate camplicon multiple alignment"
+    input:
+        fas = rules.blastdbcmd.output.fas
+    output:
+        fas = root / "camp" / "msa.fasta"
+    log:
+        log = root / "camp" / "msa.log"
+    params:
+        args = chain.from_iterable(argsm),
+        nseq = config["nseq"]
+    threads:
+        int(confm.get("--thread", "1"))
+    run:
+        cmd = ("mafft", *params.args, "-")
+        with Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE, universal_newlines=True) as proc:
+            with proc.stdin as file:
+                SeqIO.write(next(assays[wildcards.id].records("camplicon")), file, "fasta")
+                with open(input.fas) as input:
+                    SeqIO.write(iter_limit(SeqIO.parse(input, "fasta"), params.nseq), file, "fasta")
+            with proc.stdout as file:
+                with open(output.fas, "w") as output:
+                    print(*file, sep="", end="", file=output)
+            with proc.stderr as file:
+                with open(log.log, "w") as output:
+                    print(*file, sep="", end="", file=output)
+
+rule tree_camp:
+    message:
+        "calculate maximum-likelihood tree for camplicon"
+    input:
+        fas = rules.mafft_camp.output.fas
+    output:
+        tree = root / "camp" / "phy.treefile"
+    log:
+        log = root / "camp" / "phy.log"
+    shell:
+        """
+        fasttree -nt -fastest -log {log.log:q} {input.fas:q} > {output.tree:q} 2> /dev/null
+        """
+
+rule varcamp:
+    message:
+        "calculate variation w/r/t camplicon MSA"
+    input:
+        fas = rules.mafft_camp.output.fas,
+        map = rules.blastdbcmd.output.json
+    output:
+        tsv = root / "camp" / "var.tsv"
+    run:
+        # map accession to counts
+        with open(input.map) as file:
+            mapped = {ele[0]: ele for ele in json.load(file).values()}
+        # calculate variations
+        aln = SeqIO.parse(input.fas, "fasta")
+        ref = next(aln)
+        pos, n = [], 1
+        for idx in range(len(ref)):
+            pos.append(n)
+            n += ref[idx] != "-"
+        var = (
+            (alt.id, idx + 1, pos[idx], *pair, align_type(*pair))
+            for alt in aln for idx, pair in enumerate(zip(ref, alt))
+            if pair[0] != pair[1]
+        )
+        with open(output.tsv, "w") as file:
+            print("acc", "pos_aln", "pos_ref", "ref", "alt", "mut", "n", sep="\t", file=file)
+            for ele in var:
+                if ele[-1] != AlignType.SIM and ele[-1] != AlignType.UNK:
+                    print(*ele[:-1], ele[-1].name, len(mapped[ele[0]]), sep="\t", file=file)
+
+rule glsearch_comp:
+    message:
+        "glocal component alignment"
+    input:
+        fas = root / "comp" / "{key}.fasta",
+        lib = rules.blastdbcmd.output.fas
+    output:
+        tsv = root / "comp" / "{key}-glc.tsv"
+    params:
+        *chain.from_iterable(argsg)
+    threads:
+        int(confg.get("-T", "1"))
+    shell:
+        """
+        glsearch36 -n -m 8CB {params:q} {input.fas:q} {input.lib:q} | \
+            awk -F $"\t" -v OFS=$"\t" '/^#/ || !seen[$1,$2]++' > \
+            {output.tsv:q}
+        """
+
+rule simcomp:
+    message:
+        "calculate component similarity"
+    input:
+        fas = root / "comp" / "{key}.fasta",
+        tsv = rules.glsearch_comp.output.tsv
+    output:
+        tsv = root / "comp" / "{key}-sim.tsv",
+        json = root / "comp" / "{key}-bat.json"
+    run:
+        rec = SeqIO.read(input.fas, "fasta")
+        hsps = OrderedDict()
+        sims = OrderedDict()
+        for hsp in iter_hsps(SearchIO.parse(input.tsv, "blast-tab", comments=True, fields=fields_8CB)):
+            qry = rec.seq[hsp.query_start:hsp.query_end]
+            qry = str(qry if hsp.query_strand >= 0 else qry.reverse_complement())
+            saln = "".join(decode_btop(qry, hsp.btop))
+            sim = (hsp.query_end - hsp.query_start) / len(rec) * sum(1 for ele in saln if not (ele.islower() or ele == "-")) / hsp.aln_span
+            if hsp.hit_id not in sims:
+                sims[hsp.hit_id] = sim
+                hsps[hsp.hit_id] = hsp
+        with open(output.tsv, "w") as file:
+            print("acc", "comp", "val", sep="\t", file=file)
+            for key, val in sims.items():
+                print(key, wildcards.key, val, sep="\t", file=file)
+        with open(output.json, "w") as file:
+            json.dump(
+                OrderedDict((key, (val.hit_start, val.hit_end, hsp.hit_strand)) for key, val in hsps.items()),
+                fp=file
+            )
+            print(file=file)
+
+rule extract:
+    message:
+        "extract aligned component subjects"
+    input:
+        lib = rules.blastdbcmd.output.fas,
+        json = rules.simcomp.output.json
+    output:
+        fas = root / "comp" / "{key}-seq.fasta",
+        json = root / "comp" / "{key}-seq.json"
+    params:
+        db = db
+    run:
+        with open(input.json) as file:
+            bat = json.load(file)
+        recs = OrderedDict()
+        maps = defaultdict(list)
+        for rec in SeqIO.parse(input.lib, "fasta"):
+            if rec.id in bat:
+                coor = bat[rec.id]
+                rec = rec[coor[0]:coor[1]]
+                rec = rec if coor[2] >= 0 else rec.reverse_complement()
+                key = seguid(rec.seq)
+                recs[key] = recs.get(key, rec)
+                maps[key].append(rec.id)
+        SeqIO.write(recs.values(), output.fas, "fasta")
+        with open(output.json, "w") as file:
+            json.dump(maps, file, indent=4)
+
+rule mafft_comp:
+    message:
+        "calculate component multiple alignment"
+    input:
+        fas = rules.extract.output.fas
+    output:
+        fas = root / "comp" / "{key}-msa.fasta"
+    log:
+        log = root / "comp" / "{key}-msa.log"
+    params:
+        args = chain.from_iterable(argsm),
+        nseq = config["nseq"]
+    threads:
+        int(confm.get("--thread", "1"))
+    run:
+        cmd = ("mafft", *params.args, "-")
+        with Popen(cmd, stdin=PIPE, stdout=PIPE, stderr=PIPE, universal_newlines=True) as proc:
+            with proc.stdin as file:
+                SeqIO.write(next(assays[wildcards.id].records(wildcards.key)), file, "fasta")
+                with open(input.fas) as input:
+                    SeqIO.write(iter_limit(SeqIO.parse(input, "fasta"), params.nseq), file, "fasta")
+            with proc.stdout as file:
+                with open(output.fas, "w") as output:
+                    print(*file, sep="", end="", file=output)
+            with proc.stderr as file:
+                with open(log.log, "w") as output:
+                    print(*file, sep="", end="", file=output)
+
+rule tree_comp:
+    message:
+        "calculate maximum-likelihood tree for component"
+    input:
+        fas = rules.mafft_comp.output.fas
+    output:
+        tree = root / "comp" / "{key}-phy.treefile"
+    log:
+        log = root / "comp" / "{key}-phy.log"
+    shell:
+        """
+        fasttree -nt -fastest -log {log.log:q} {input.fas:q} > {output.tree:q} 2> /dev/null
+        """
+
+rule tree_comp_collect:
+    input:
+        lambda wildcards: expand(str(root / "comp" / "{key}-phy.treefile"), key=agg(wildcards), allow_missing=True)
+    output:
+        txt = root / "phy-comp.txt"
+    shell:
+        """echo {input:q} | tr ' ' '\n' > {output:q}"""
+
+rule bind:
+    message:
+        "calculate binding"
+    input:
+        glc = lambda wildcards: expand(str(root / "comp" / "{key}-glc.tsv"), key=agg(wildcards), allow_missing=True),
+        sim = lambda wildcards: expand(str(root / "comp" / "{key}-sim.tsv"), key=agg(wildcards), allow_missing=True)
+    output:
+        tsv = root / "bind.tsv"
+    params:
+        psim = config["simcomp"],
+        dist = config["dist"]
+    run:
+        # map (subject, query) -> similarity %
+        psim = defaultdict(dict)
+        for path in input.sim:
+            with open(path) as file:
+                for row in DictReader(file, delimiter="\t"):
+                    psim[row["acc"]][row["comp"]] = float(row["val"])
+        # aggregate accession -> [rows]
+        hsps = defaultdict(list)
+        for path in map(Path, input.glc):
+            for hsp in iter_hsps(SearchIO.parse(path, "blast-tab", comments=True, fields=fields_8CB)):
+                hsps[hsp.hit_id].append(hsp)
+        # output hits
+        assay = assays[wildcards.id]
+        with open(output.tsv, "w") as file:
+            print("acc", "bind", "heat", "num_n", sep="\t", file=file)
+            for key, val in hsps.items():
+                # get the first hit
+                hits = next(assay.hits(val, params.dist), ())
+                ncom = len(assay.components)
+                # check if all components exceed threshold
+                bind = sum(params.psim <= psim[hsp.hit_id][hsp.query_id] for hsp in hits) == ncom
+                # calculate average similarity %
+                heat = sum(psim[hsp.hit_id][hsp.query_id] for hsp in hits) / ncom
+                # number of N's
+                num_n = sum(
+                    sum(ele == "N" for ele in list(filter(str.isalpha, hsp.btop))[1::2])
+                    for hsp in hits
+                )
+                print(key, bind, heat, num_n, sep="\t", file=file)
+
+rule matrix:
+    message:
+        "calculate confusion matrix"
+    input:
+        hit = rules.bind.output.tsv,
+        lcl = rules.blastn.output.tsv,
+        map = rules.blastdbcmd.output.json
+    output:
+        root / "mat.tsv"
+    params:
+        db = config.get("dburl")
+    run:
+        with open(input.map) as file:
+            mapped = {ele[0]: ele for ele in json.load(file).values()}
+        # map accession to taxid
+        taxa = {
+            hit.id: hit.tax_ids[0]
+            for res in SearchIO.parse(input.lcl, "blast-tab", comments=True, fields=(*fields_8CB, "staxids"))
+            for hit in res
+        }
+        # map taxid to lineage
+        engine = create_engine(params.db)
+        with session_scope(sessionmaker(bind=engine)) as session:
+            lineages = {ele: set(ele[0] for ele in ancestors(session, ele)) for ele in set(taxa.values())}
+        # output report
+        assay = assays[wildcards.id]
+        with open(input.hit) as file1, open(output[0], "w") as file2:
+            print("acc", "bind", "target", "outcome", sep="\t", file=file2)
+            for row in DictReader(file1, delimiter="\t"):
+                key = row["acc"]
+                is_100 = int(float(row["heat"])) == 1
+                is_hit = row["bind"] == "True"
+                is_tar = bool(assay.targets & lineages[taxa[key]])
+                if is_100:
+                    outcome = "PT" if is_tar else "PF"
+                elif is_hit:
+                    outcome = "TP" if is_tar else "FP"
+                else:
+                    outcome = "FN" if is_tar else "TN"
+                outcome += "N" * bool(int(row["num_n"]))
+                for ele in mapped[key]:
+                    print(ele, is_hit, is_tar, outcome, sep="\t", file=file2)

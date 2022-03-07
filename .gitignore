@@ -1,0 +1,17 @@
+.pyc
+.snakemake
+*.pyc
+*.log
+*.ndb
+*.nhd
+*.nhi
+*.nhr
+*.nin
+*.nog
+*.nos
+*.not
+*.nsq
+*.ntf
+*.nto
+*.perf
+*.ssv

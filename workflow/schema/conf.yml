@@ -1,0 +1,46 @@
+$schema: "http://json-schema.org/draft-06/schema#"
+
+description: parameters
+
+properties:
+  file:
+    type: string
+    description: the assay file
+  out:
+    type: string
+    description: the ouput directory
+  db:
+    type: string
+    description: the BLAST database
+  dburl:
+    type: string
+    description: the path to the taxonomy SQLite database
+  confb:
+    type: string
+    description: the BLAST+ parameters
+  confg:
+    type: string
+    description: the glsearch parameters
+  confm:
+    type: string
+    description: the MAFFT parameters
+  simcamp:
+    type: number
+    description: the camplicon similarity threshold
+    default: 0.85
+  simcomp:
+    type: number
+    description: the component similarity threshold
+    default: 0.90
+  dist:
+    type: integer
+    description: the distance between outer primers
+    default: 1000
+  nseq:
+    type: integer
+    description: the maximum number of sequences to include in the MSA
+    default: -1
+
+required:
+  - file
+  - db
