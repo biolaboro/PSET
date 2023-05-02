@@ -3,26 +3,43 @@
 from csv import DictWriter, Sniffer
 from subprocess import PIPE, Popen
 
-fields_std = (
-    "qaccver", "saccver",
-    "pident", "length", "mismatch", "gapopen",
-    "qstart", "qend", "sstart", "send",
-    "evalue", "bitscore"
-)
+fields_std = ("qaccver", "saccver", "pident", "length", "mismatch", "gapopen", "qstart", "qend", "sstart", "send", "evalue", "bitscore")
 
 fields_8CB = (*fields_std, "btop")
 
 
 def argify(*conf, sep="=", pfx="-"):
+    """Generate command-line configuration string entries as tuples.
+
+    -key     -> (key, )
+    -key=val -> (key, val)
+
+    Args:
+        *conf: the configuration strings
+        sep (str, optional): the key-value separator. Defaults to "=".
+        pfx (str, optional): the key prefix string. Defaults to "-".
+
+    Yields:
+        tuple[str, ...]: the next configuration tuple
+    """
     for ele in conf:
         tok = ele.split(sep, maxsplit=1)
         if len(tok) == 2:
             yield (pfx + tok[0], tok[1])
         else:
-            yield (pfx + tok[0], )
+            yield (pfx + tok[0],)
 
 
 def batchify(entries, size=10):
+    """Generate batches from entries.
+
+    Args:
+        entries (iterable): the entries
+        size (int, optional): the batch size. Defaults to 10.
+
+    Yields:
+        list: the next batch
+    """
     batch = []
     for idx, ele in enumerate(entries, start=1):
         batch.append(ele)
@@ -34,6 +51,14 @@ def batchify(entries, size=10):
 
 
 def blastdbcmd_info(db):
+    """Get BLAST+ database metadata.
+
+    Args:
+        db (str): the BLAST+ database path
+
+    Yields:
+        tuple: the next key-value pair
+    """
     cmd = ("blastdbcmd", "-info", "-db", db)
     with Popen(cmd, stdout=PIPE, universal_newlines=True) as pipe:
         with pipe.stdout as file:
@@ -75,17 +100,11 @@ def iter_hsps(parse):
 
 
 def iter_limit(entries, limit=None):
-    yield from (
-        ele for idx, ele in enumerate(entries)
-        if limit is None or limit <= 0 or idx < limit
-    )
+    yield from (ele for idx, ele in enumerate(entries) if limit is None or limit <= 0 or idx < limit)
 
 
 def iter_lines(lines, comment="#"):
-    yield from (
-        line for line in lines
-        if not line.isspace() and line and line.lstrip()[:1] != comment
-    )
+    yield from (line for line in lines if not line.isspace() and line and line.lstrip()[:1] != comment)
 
 
 def unique(iterable, func=None):

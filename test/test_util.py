@@ -6,8 +6,15 @@ from subprocess import PIPE, Popen
 from tempfile import NamedTemporaryFile
 
 from Bio import SearchIO
-from pset.util import (batchify, contextify, iter_hsps, iter_limit, iter_lines,
-                       sniff_lines, slice_aln)
+
+from pset.util import (
+    batchify,
+    contextify,
+    iter_limit,
+    iter_lines,
+    slice_aln,
+    sniff_lines,
+)
 
 
 class Test(unittest.TestCase):
@@ -69,8 +76,7 @@ class Test(unittest.TestCase):
         self.assertListEqual(["foo", "bar", "baz"], list(iter_lines(["foo", "", "#foo", "bar", "   \t ", "baz"])))
 
     def test_sniff_lines(self):
-        """Test sniff...
-        """
+        """Test sniff..."""
         delimiters = ",;|\t"
         template = "\n# comment\nfoo,bar,baz\n#,;|\t\n    foo,bar,baz    \n"
         for ele in delimiters:

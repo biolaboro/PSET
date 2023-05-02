@@ -1,12 +1,23 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 import sys
-from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, FileType
+from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
+from io import StringIO
 from subprocess import PIPE, Popen
 
 from Bio import SearchIO, SeqIO
-from pset.assay import dna_val, parse_assays
+
+from pset.assay import parse_assays
 from pset.util import fields_std, iter_hsps
+
+
+def first(lines):
+    for line in lines:
+        if line.startswith("#"):
+            yield line
+        else:
+            yield line
+            break
 
 
 def parse_argv(argv):
@@ -16,8 +27,7 @@ def parse_argv(argv):
     parser.add_argument("n5", type=int, help="the amount of 5' nucleotides to prepend to the definition")
     parser.add_argument("n3", type=int, help="the amount of 3' nucleotides to append to the definition")
     parser.add_argument("-pident", default=95.0, type=float, help="the percent identity threshold [0, 100]")
-    args = parser.parse_args(argv)
-    return args
+    return parser.parse_args(argv)
 
 
 def main(argv):
@@ -37,7 +47,12 @@ def main(argv):
             with Popen(cmd, universal_newlines=True, stdin=PIPE, stdout=PIPE) as proc:
                 with proc.stdin as file:
                     SeqIO.write(amp, file, "fasta")
-                hsp = next(iter_hsps(SearchIO.parse(proc.stdout, "blast-tab", comments=True, fields=fields_std)))
+                with proc.stdout as file:
+                    lines = (line for line in file)
+                    foo = StringIO()
+                    foo.write("\n".join(lines))
+                    foo.seek(0)
+                hsp = next(iter_hsps(SearchIO.parse(foo, "blast-tab", comments=True, fields=fields_std)))
                 # guarantee full-query coverage above threshold
                 assert args.pident <= hsp.ident_pct
                 assert hsp.query_start == 0
@@ -46,12 +61,8 @@ def main(argv):
             # add context
             ref = lib[hsp.hit_id]
             start, end = span
-            definition = ref[start - args.n5:start].seq + assay.adefinition() + ref[end:end + args.n3].seq
-            print(
-                assay.id, ";".join(map(str, sorted(assay.targets))), definition,
-                hsp.hit_id, hsp.hit_start, hsp.hit_end, hsp.ident_pct,
-                sep="\t"
-            )
+            definition = ref[start - args.n5 : start].seq + assay.adefinition() + ref[end : end + args.n3].seq
+            print(assay.id, ";".join(map(str, sorted(assay.targets))), definition, hsp.hit_id, hsp.hit_start, hsp.hit_end, hsp.ident_pct, sep="\t")
 
     return 0
 

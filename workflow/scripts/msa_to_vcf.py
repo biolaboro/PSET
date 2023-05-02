@@ -37,26 +37,23 @@ def msa_to_vcf(aln):
         for gap in gaps:
             p1, p2 = gap.span()
             yield (
-                (alt.id, 1, rseq[0], aseq[apos[p1]-1:apos[p2]])
-                if p1 == 0 else
-                (alt.id, rpos[p1-1], rseq[rpos[p1]-1], aseq[apos[p1]-1-1:apos[p2]-1])
+                (alt.id, 1, rseq[0], aseq[apos[p1] - 1 : apos[p2]])
+                if p1 == 0
+                else (alt.id, rpos[p1 - 1], rseq[rpos[p1] - 1], aseq[apos[p1] - 1 - 1 : apos[p2] - 1])
             )
         # deletions
         gaps = re.finditer(r"-+", "".join(".-"[x != "-" and y == "-"] for x, y in zip(ref, alt)))
         for gap in gaps:
             p1, p2 = gap.span()
             yield (
-                (alt.id, 1, rseq[rpos[p1]-1:rpos[p2]], aseq[0])
-                if p1 == 0 else
-                (alt.id, rpos[p1]-1, rseq[rpos[p1]-1-1:rpos[p2]-1], aseq[apos[p1]-1])
+                (alt.id, 1, rseq[rpos[p1] - 1 : rpos[p2]], aseq[0])
+                if p1 == 0
+                else (alt.id, rpos[p1] - 1, rseq[rpos[p1] - 1 - 1 : rpos[p2] - 1], aseq[apos[p1] - 1])
             )
 
 
 def parse_args(argv):
-    parser = ArgumentParser(
-        description="convert MSA -> VCF",
-        formatter_class=ArgumentDefaultsHelpFormatter
-    )
+    parser = ArgumentParser(description="convert MSA -> VCF", formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("file", type=FileType(), help="the multiple sequence alignment as FASTA")
     return parser.parse_args(argv)
 
@@ -85,11 +82,9 @@ def main(argv):
         for entry in msa_to_vcf(aln):
             key, pos, ref, alt = entry
             col = keys[key]
-            print(
-                chrom, pos, ".", ref, alt, ".", ".", ".", "GT",
-                *(int(idx == col) for idx in range(len(keys))),
-                sep="\t"
-            )
+            print(chrom, pos, ".", ref, alt, ".", ".", ".", "GT", *(int(idx == col) for idx in range(len(keys))), sep="\t")
+
+    return 0
 
 
 if __name__ == "__main__":
