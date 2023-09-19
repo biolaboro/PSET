@@ -1,0 +1,73 @@
+{
+    "F1cB1c": {
+        "PRIMER_MAX_SIZE": 22,
+        "PRIMER_MAX_TM": 66,
+        "PRIMER_MIN_SIZE": 20,
+        "PRIMER_MIN_TM": 64,
+        "PRIMER_OPT_TM": 65
+    },
+    "F2B2": {
+        "PRIMER_MAX_SIZE": 20,
+        "PRIMER_MAX_TM": 61,
+        "PRIMER_MIN_SIZE": 18,
+        "PRIMER_MIN_TM": 59,
+        "PRIMER_OPT_TM": 60,
+        "PRIMER_PRODUCT_SIZE_RANGE": [
+            120,
+            160
+        ]
+    },
+    "F3B3": {
+        "PRIMER_MAX_SIZE": 20,
+        "PRIMER_MAX_TM": 61,
+        "PRIMER_MIN_SIZE": 18,
+        "PRIMER_MIN_TM": 59,
+        "PRIMER_OPT_TM": 60,
+        "PRIMER_PRODUCT_SIZE_RANGE": [
+            300,
+            2000
+        ]
+    },
+    "GLOBAL": {
+        "PRIMER_DNA_CONC": 50,
+        "PRIMER_EXPLAIN_FLAG": 1,
+        "PRIMER_MAX_GC": 65,
+        "PRIMER_MAX_NS_ACCEPTED": 0,
+        "PRIMER_MIN_GC": 40,
+        "PRIMER_NUM_RETURN": 50,
+        "PRIMER_SALT_DIVALENT": 8,
+        "PRIMER_SALT_MONOVALENT": 50,
+        "PRIMER_SECONDARY_STRUCTURE_ALIGNMENT": 1
+    },
+    "LAMP": {
+        "F1cB1c_DIST_RANGE": [
+            1,
+            100
+        ],
+        "F2F1c_DIST_RANGE": [
+            20,
+            80
+        ],
+        "F3F2_DIST_RANGE": [
+            1,
+            80
+        ]
+    },
+    "LFLB": {
+        "PRIMER_MAX_SIZE": 25,
+        "PRIMER_MAX_TM": 66,
+        "PRIMER_MIN_SIZE": 15,
+        "PRIMER_MIN_TM": 64,
+        "PRIMER_OPT_TM": 65
+    },
+    "PSET": {
+        "context": [
+            6,
+            6
+        ]
+    },
+    "THERMO": {
+        "dv_conc": 0.2,
+        "mv_conc": 50
+    }
+}

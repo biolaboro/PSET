@@ -14,7 +14,7 @@ properties:
     description: the identifiers of assays to include in the run (id-1,id-2,...), defaults to all
   flank:
     type: boolean
-    desciption: the flag to query with the flanking primers instead of the entire amplicon at the local alignment stage
+    desciption: the flag to query with the flanking primers instead of the entire amplicon at the local alignment stage (experimental)
     default: False
   context:
     type: string
@@ -26,16 +26,16 @@ properties:
     default: "."
   dburl:
     type: string
-    default: "sqlite:///resources/taxa.db"
+    default: "sqlite:///resources/taxa/taxa.db"
     description: the path to the taxonomy SQLite database
   confb:
     type: string
-    description: the BLAST+ parameters (key,key=val,...)
-    default: "task=blastn,num_alignments=10000,max_hsps=1,subject_besthit"
+    description: the BLAST+ parameters ('-key -key=val')
+    default: "-task=blastn -num_alignments=10000 -max_hsps=1 -subject_besthit"
   confg:
     type: string
-    description: the glsearch parameters (key,key=val,...)
-    default: "E=10000"
+    description: the glsearch parameters ('-key -key=val')
+    default: "-E=10000"
   simlcl:
     type: number
     description: the similarity threshold for local alignment
@@ -44,10 +44,22 @@ properties:
     type: number
     description: the similarity threshold for glocal alignment
     default: 0.90
-  dist:
-    type: integer
-    description: the maximum distance between outer primers
-    default: 1000
+  dFR:
+    type: string
+    description: the min/max distance range (inclusive) for F/R primers
+    default: 1,1000
+  dF3F2:
+    type: string
+    description: the min/max distance range (inclusive) for F3/F2 primers
+    default: 20,80
+  dF2F1c:
+    type: string
+    description: the min/max distance range (inclusive) for F2/F1c primers
+    default: 20,80
+  dF1cB1c:
+    type: string
+    description: the min/max distance range (inclusive) for F1c/B1c primers
+    default: 1,100
   xtaxa:
     type: string
     description: the ancestral taxa to exclude (val-1,val-2,...)

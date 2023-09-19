@@ -14,7 +14,6 @@ from plotnine import (
     facet_grid,
     geom_tile,
     ggplot,
-    ggsave,
     theme,
 )
 
@@ -26,7 +25,7 @@ def read_data(path):
         df_meta = pd.DataFrame(dict(key=key, acc=ele) for key, val in json.load(file).items() for ele in val)
     df_data = pd.read_csv(path / "hit.tsv", delimiter="\t")
     if not df_data.empty:
-        df_data["id"] = path.stem
+        df_data["id"] = path.name
         df_data = df_data.merge(df_meta, on="acc", how="left")
         df_data["n"] = df_data.groupby("key")["key"].transform("count")
         df_data = df_data[["id", "key", "call", "n", "heat"]].drop_duplicates()
@@ -38,6 +37,7 @@ def parse_args(argv):
     parser.add_argument("path", help="the paths to the PSET results", nargs="+")
     parser.add_argument("-out", help="the output file", default="heat.png")
     parser.add_argument("-scales", help="the figure facet scales parameter", default="free_y")
+    parser.add_argument("-space", help="the figure facet space parameter", default="free_y")
     parser.add_argument("-dpi", help="the image DPI", type=int, default=300)
     parser.add_argument("-proc", type=int, default=1)
     return parser.parse_args(argv)
@@ -57,7 +57,7 @@ def main(argv):
     plot = (
         ggplot(df_data, aes("id", "key", fill="heat"))
         + geom_tile()
-        + facet_grid("call ~ .", scales=args.scales)
+        + facet_grid("call ~ .", scales=args.scales, space=args.space)
         + theme(
             axis_text_x=element_text(rotation=90, size=4),
             axis_text_y=element_blank(),
@@ -66,7 +66,7 @@ def main(argv):
             strip_background=element_rect(color="black"),
         )
     )
-    ggsave(plot=plot, width=6.5, height=6.5, units="in", filename=args.out, dpi=args.dpi)
+    plot.save(width=6.5, height=6.5, units="in", filename=args.out, dpi=args.dpi)
 
     return 0
 

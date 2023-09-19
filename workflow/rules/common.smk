@@ -1,7 +1,8 @@
 # imports
 
 import json
-from collections import OrderedDict, defaultdict
+import shlex
+from collections import defaultdict
 from itertools import chain
 from pathlib import Path
 from subprocess import PIPE, Popen, check_call
@@ -9,18 +10,16 @@ from subprocess import PIPE, Popen, check_call
 from Bio import SearchIO, SeqIO
 from Bio.SeqUtils.CheckSum import seguid
 
-
 from pset.assay import Assay, parse_assays
-from pset.util import argify, fields_8CB
+from pset.util import fields_8CB
 
 
 # parse args
 db = Path(config["db"])
 context = tuple(map(int, config["context"].split(",")))
-argsb = list(argify(*filter(len, config.get("confb", "").split(","))))
-confb = {ele[0]: ele[1] if len(ele) > 1 else None for ele in argsb}
-argsg = list(argify(*filter(len, config.get("confg", "").split(","))))
-confg = {ele[0]: ele[1] if len(ele) > 1 else None for ele in argsg}
+confb = [ele.split("=") for ele in shlex.split(config.get("confb", ""))]
+confg = [ele.split("=") for ele in shlex.split(config.get("confg", ""))]
+dkwargs = {key: tuple(map(int, config[key].split(",", maxsplit=1))) for key in ("dFR", "dF3F2", "dF2F1c", "dF1cB1c")}
 
 # globals
 root = Path(config["out"]) / db.name
@@ -31,4 +30,4 @@ base = Path(workflow.basedir)
 ids = config.get("assays")
 ids = set(ids.split(",")) if ids else ids
 with open(config["file"]) as file:
-    assays = OrderedDict((ele.id, ele) for ele in parse_assays(file, context=context) if not ids or ele.id in ids)
+    assays = {ele.id: ele for ele in parse_assays(file, context=context, target_type=int) if not ids or ele.id in ids}

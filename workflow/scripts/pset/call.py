@@ -23,7 +23,10 @@ def parse_argv(argv):
     parser.add_argument("-alignment", help="the input alignment TSV file", required=True)
     parser.add_argument("-dburl", help="the path to the taxonomy SQLite database", required=True)
     parser.add_argument("-sim", help="the component similarity threshold", default=0.9, type=float)
-    parser.add_argument("-dist", help="the maximum distance between outer primers", default=1000, type=int)
+    parser.add_argument("-dFR", help="the min/max distance range (inclusive) for F/R primers", default=(1, 1000), type=int, nargs=2)
+    parser.add_argument("-dF3F2", help="the min/max distance range (inclusive) for F3/F2 primers", default=(20, 80), type=int, nargs=2)
+    parser.add_argument("-dF2F1c", help="the min/max distance range (inclusive) for F2/F1c primers", default=(20, 80), type=int, nargs=2)
+    parser.add_argument("-dF1cB1c", help="the min/max distance range (inclusive) for F1c/B1c primers", default=(1, 100), type=int, nargs=2)
     parser.add_argument("-xtaxa", help="the ancestral taxa to exclude", nargs="+", default=(81077,), type=int)
     parser.add_argument("-out", type=FileType("w"), default="-")
     return parser.parse_args(argv)
@@ -34,8 +37,6 @@ def main(argv):
 
     xtaxa = set(map(int, args.xtaxa))
 
-    with open(args.assay) as file:
-        db = json.load(file)["config"]["db"]
     # load assay
     assay = Assay.from_json(args.assay)
     # map duplicates
@@ -52,7 +53,8 @@ def main(argv):
 
     # process glsearch hits
     result = namedtuple("Result", ("qaln", "saln", "qcov", "atypes", "psim", "qsim"))
-    results = defaultdict(list)
+    sbj_results = defaultdict(list)
+    hsp_results = {}
     # process BLAST+ results
     for hsp in iter_hsps(SearchIO.parse(args.alignment, "blast-tab", comments=True, fields=fields_8CB)):
         # calculate query similarity percentage and mutations
@@ -64,43 +66,44 @@ def main(argv):
         atypes = Counter((align_type(*ele).name for ele in zip(qaln, saln)))
         psim = sum(not (ele.islower() or ele == "-") for ele in saln) / hsp.aln_span
         qsim = qcov * psim
-        hit_id = re.sub(r":[0-9]+$", "", hsp.hit_id)  # acc.ver...:nth-alignment
-        # tack the result onto the HSP object
-        hsp.result = result(qaln, saln, qcov, atypes, psim, qsim)
-        # aggregate HSPs by hit id (= the subject accession)
-        results[hit_id].append(hsp)
+        sbj_id = re.sub(r":[0-9]+$", "", hsp.hit_id)  # acc.ver...:nth-alignment
+        # aggregate HSPs by the subject accession)
+        sbj_results[sbj_id].append(hsp)
+        hsp_results[hsp.hit_id] = result(qaln, saln, qcov, atypes, psim, qsim)
 
     # process hits
     near = set()
-    obj = dict(db=db, assay=dict(zip(assay.key(), assay.val())), hits=[], near=[])
-    for key, val in results.items():  # iter subject id -> query result mapping
-        # collect HSPs of primer queries
-        hsps = sorted((ele for ele in val if ele.query_id in assay.primers), key=lambda x: x.result.qsim, reverse=True)
-        hit = next(assay.hits(hsps, dist=args.dist), ())
-        # check if all components exceed threshold
-        bind = {hsp.query_id: args.sim <= hsp.result.qsim for hsp in hit}
-        is_bind = len(bind) and all(bind.values())
-        calls = defaultdict(list)
-        add_n = "N" * any("n" in hsp.result.saln for hsp in assay.primers if hsp in hit)
-        # make call for each sequence duplcate (with potentially different taxonomy)
-        for acc in mapped[key]:
-            tax = taxa[acc]
-            is_target = bool(assay.targets & lineages[tax])
-            is_exclude = bool(xtaxa & lineages[tax])
-            call = "XX" if is_exclude else ((("TP" if is_target else "FP") if is_bind else ("FN" if is_target else "TN")) + add_n)
-            calls[call].append(acc)
-            if call[:2] in ("FP", "TN") and nn_taxa & lineages[tax]:
-                near.add(acc)
-        # build evaluation object for all queries
-        evals = {
-            hsp.query_id: dict(
-                **dict(zip(result._fields, hsp.result)),
-                qstr="-+"[hsp.query_strand >= 0],
-                bind=bind[hsp.query_id],
-            )
-            for hsp in hit
-        }
-        obj["hits"].append(dict(evals=evals, calls=calls))
+    obj = dict(assay=dict(zip(assay.key(), assay.val())), hits=[], near=[])
+    dkwargs = dict(dFR=args.dFR, dF3F2=args.dF3F2, dF2F1c=args.dF2F1c, dF1cB1c=args.dF1cB1c)
+    for key, val in sbj_results.items():  # iter subject id -> query result mapping
+        # collect HSPs of queries
+        hsps = sorted((ele for ele in val if ele.query_id in assay.components), key=lambda x: hsp_results[x.hit_id].qsim, reverse=True)
+        hit = next(assay.hits(hsps, **dkwargs), ())
+        if hit:
+            # check if all components exceed threshold
+            bind = {hsp.query_id: args.sim <= hsp_results[hsp.hit_id].qsim for hsp in hit}
+            is_bind = len(bind) and all(bind.values())
+            calls = defaultdict(list)
+            add_n = "N" * any("n" in hsp_results[hsp.hit_id].saln for hsp in assay.components if hsp in hit)
+            # make call for each duplicate sequence (with potentially different taxonomy)
+            for acc in mapped[key]:
+                tax = taxa[acc]
+                is_target = bool(assay.targets & lineages[tax])
+                is_exclude = bool(xtaxa & lineages[tax])
+                call = "XX" if is_exclude else ((("TP" if is_target else "FP") if is_bind else ("FN" if is_target else "TN")) + add_n)
+                calls[call].append(acc)
+                if call[:2] in ("FP", "TN") and nn_taxa & lineages[tax]:
+                    near.add(acc)
+            # build evaluation object for all queries
+            evals = {
+                hsp.query_id: dict(
+                    **dict(zip(result._fields, hsp_results[hsp.hit_id])),
+                    qstr="-+"[hsp.query_strand >= 0],
+                    bind=bind[hsp.query_id],
+                )
+                for hsp in hit
+            }
+            obj["hits"].append(dict(evals=evals, calls=calls))
     obj["near"] = list(near)
 
     # output

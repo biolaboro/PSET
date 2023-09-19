@@ -1,4 +1,4 @@
-report: base.parent / "report" / "workflow.rst"
+report: base.parent / "README.rst"
 
 
 rule tab_alignments:
@@ -7,9 +7,9 @@ rule tab_alignments:
     input:
         jsn=rules.call.output.jsn,
     output:
-        tsv=report(subroot / subroot / "aln.tsv", category="Assay", subcategory="{id}"),
+        tsv=report(subroot / "aln.tsv", category="Assay", subcategory="{id}"),
     params:
-        script=base / "scripts" / "aln.jq",
+        script=base / "scripts" / "report" / "aln.jq",
     threads: 1
     shell:
         """
@@ -25,7 +25,7 @@ rule tab_hits:
     output:
         tsv=report(subroot / "hit.tsv", category="Assay", subcategory="{id}"),
     params:
-        script=base / "scripts" / "hit.jq",
+        script=base / "scripts" / "report" / "hit.jq",
     threads: 1
     shell:
         """
@@ -41,11 +41,11 @@ rule tab_confusion:
     output:
         tsv=report(root / "con.tsv", category="Summary"),
     params:
-        script=base / "scripts" / "con.jq",
+        script=base / "scripts" / "report" / "con.jq",
     shell:
         """
         {{
-            printf "db\tid\tTP\tFN\tFP\tTN\n";
+            printf "id\tTP\tFN\tFP\tTN\n";
             jq -r -f {params.script:q} {input.jsn:q};
         }} > {output.tsv:q}
         """
@@ -61,7 +61,7 @@ rule plot_mismatches:
     log:
         log=subroot / "mis.log",
     params:
-        script=base / "scripts" / "plot_mismatches.py",
+        script=base / "scripts" / "report" / "plot_mismatches.py",
         dpi=config["dpi"],
     threads: 1
     shell:
@@ -78,10 +78,10 @@ rule plot_heat:
     output:
         png=report(root / "heat.png", caption=base.parent / "report" / "heat.rst", category="Summary"),
     log:
-        log=root / "mis.log",
+        log=root / "heat.log",
     params:
         parents=lambda wildcards, input: [Path(ele).parent for ele in input],
-        script=base / "scripts" / "plot_heat.py",
+        script=base / "scripts" / "report" / "plot_heat.py",
         dpi=config["dpi"],
     threads: 1
     shell:
@@ -91,51 +91,42 @@ rule plot_heat:
 
 
 rule tab_config:
-    input:
-        jsn=expand(rules.assay.output.jsn, id=assays).pop(),
     output:
         tsv=report(root / "cfg.tsv", category="Meta"),
     params:
-        cmd='(["key", "value"] | @tsv), (.config | to_entries[] | [.key, .value] | @tsv)',
+        cmd='(["key", "value"] | @tsv), (. | to_entries[] | [.key, .value] | @tsv)',
+        config=json.dumps(config),
     threads: 1
     shell:
         """
-        jq -r {params.cmd:q} {input.jsn} > {output.tsv:q}
+        echo {params.config:q} | jq -r {params.cmd:q} > {output.tsv:q}
         """
 
 
-rule tab_targets:
+rule report_offline:
     input:
-        jsn=expand(rules.assay.output.jsn, id=assays),
+        tsv=rules.tab_confusion.output.tsv,
+        png=Path(rules.plot_heat.output.png).resolve(),
     output:
-        tsv=report(root / "tar.tsv", category="Meta"),
+        html=root / "report_offline.html",
+    threads: 1
     params:
-        db=config["db"],
-        taxdb=config["dburl"][len("sqlite:///") :],
+        md=base.parent / "README.md",
+        cmd='{printf("|"); for (i = 1; i <= NF; ++i) printf("%s|", $i); printf("\\n")}',
+        css="<style>table, th, td { border: 1px solid; } </style>",
     shell:
         """
-        touch {output.tsv}
         {{
-            jq '.targets[]' {input.jsn:q} | sort -u | \
-                blastdbcmd -db {params.db:q} -taxidlist - -outfmt '%T' | sort -n | uniq -c | \
-            awk -v OFS=$'\t' '{{ print($2, $1); }}' > {output.tsv}.tmp1
-            cut -f 1 {output.tsv}.tmp1 | \
-                xargs python -m taxa.taxa -database {params.taxdb:q} lineage | \
-                awk '$1==$2 {{ print($3, $6); }}' > {output.tsv}.tmp2
-            paste {output.tsv}.tmp1 {output.tsv}.tmp2 > {output.tsv}
-            rm -f {output.tsv}.tmp[12]
-        }} || true
-        """
-
-
-rule txt_blastdbinfo:
-    output:
-        txt=report(root / "bdb.tsv", category="Meta"),
-    params:
-        db=config["db"],
-    shell:
-        """
-        blastdbcmd -db {params.db:q} -info > {output.txt}
+            cat {params.md:q};
+            printf "\n## Confusion Matrix\n";
+            NF="$(awk -F $'\t' 'NR == 1 {{ printf(NF); }}' {input.tsv:q})";
+            awk -F $'\t' 'NR == 1 {params.cmd}' {input.tsv:q};
+            printf "|"; seq 1 "$NF" | while read -r _; do printf -- "-|"; done; printf "\\n";
+            awk -F $'\t' 'NR >= 2 {params.cmd}' {input.tsv:q};
+            printf "\n## Heatmap\n";
+            printf "\n![Heatmap](%s)\n" {input.png:q};
+            printf "\n%s\n" {params.css:q}
+        }} | pandoc --metadata title=PSET --embed-resources --standalone - -o {output.html:q}
         """
 
 
@@ -145,7 +136,6 @@ rule target_tsv:
         expand(rules.tab_alignments.output.tsv, id=assays),
         rules.tab_confusion.output.tsv,
         rules.tab_config.output.tsv,
-        rules.tab_targets.output.tsv,
 
 
 rule target_report:
@@ -156,5 +146,8 @@ rule target_report:
         expand(rules.plot_mismatches.output.png, id=assays),
         rules.plot_heat.output.png,
         rules.tab_config.output.tsv,
-        rules.tab_targets.output.tsv,
-        rules.txt_blastdbinfo.output.txt,
+
+
+rule target_report_offline:
+    input:
+        md=rules.report_offline.output.html,

@@ -8,7 +8,7 @@ from pathlib import Path
 from subprocess import PIPE, Popen, check_call
 from tempfile import NamedTemporaryFile
 
-from Bio import SearchIO, SeqIO
+from Bio import SearchIO, Seq, SeqIO
 
 from pset.assay import (
     Assay,
@@ -38,7 +38,7 @@ def perfect_hits(assay, subject):
                             if hsp.ident_pct == 100:
                                 hsps[hsp.hit_id].append(hsp)
 
-    return next(assay.hits(next(iter(hsps.values()), []), dist=1000), None)
+    return next(assay.hits(next(iter(hsps.values()), []), dFR=(1, 1000), dF3F2=(20, 80), dF2F1c=(20, 80), dF1cB1c=(1, 100)), None)
 
 
 class Test(unittest.TestCase):
@@ -49,26 +49,45 @@ class Test(unittest.TestCase):
 
     def test_factory(self):
         print("\n")
-        print(Assay.factory("assay", "[A]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "[A]N", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A]N", [1]).components, sep="\n")
-        print(Assay.factory("assay", "[A][T]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A][T]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "[A]N[T]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "[A][T]N", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A]N[T]N", [1]).components, sep="\n")
-        print(Assay.factory("assay", "[A(T]CG[T)A]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A(T]CG[T)A]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A(T]CG[T)A]N", [1]).components, sep="\n")
-        print(Assay.factory("assay", "[A{AA]C}{G[GGG}T]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A{AA]C}{G[GGG}T]", [1]).components, sep="\n")
-        print(Assay.factory("assay", "[A{AA]C}{G[GGG}T]N", [1]).components, sep="\n")
-        print(Assay.factory("assay", "N[A{AA]C}{G[GGG}T]N", [1]).components, sep="\n")
+        print(*Assay.factory("[A]", {1}, "assay").records(), "assay", sep="\n")
+        print(Assay.factory("[A]", {1}).components, sep="\n")
+        print(Assay.factory("[A]", id="id").components, sep="\n")
+        print(Assay.factory("N[A]").components, sep="\n")
+        print(Assay.factory("[A]N").components, sep="\n")
+        print(Assay.factory("N[A]N").components, sep="\n")
+        print(Assay.factory("[A][T]").components, sep="\n")
+        print(Assay.factory("N[A][T]").components, sep="\n")
+        print(Assay.factory("[A]N[T]").components, sep="\n")
+        print(Assay.factory("[A][T]N").components, sep="\n")
+        print(Assay.factory("N[A](N)[T]N").components, sep="\n")
+        print(Assay.factory("[A][C]G[T][AA]CC[GG][TT]").components, sep="\n")
+        print(Assay.factory("[A][C](G)[T][AA]CC[GG][TT]").components, sep="\n")
+        print(Assay.factory("[A][C]G[T][AA](CC)[GG][TT]").components, sep="\n")
+        print(Assay.factory("[A][C](G)[T][AA](CC)[GG][TT]").components, sep="\n")
+        print(Assay.factory("N[A][C](G)[T][AA](CC)[GG][TT]N").components, sep="\n")
+        print(Assay.factory("N[A][C](G)[T][AA](CC)[GG][TT]N"))
+
+    def test_lamp_internals(self):
+        lamp = Assay.factory("[A][C]G[T][AA]CC[GG][TT]")
+        self.assertEqual(lamp.subassays[0].definition, "[A]CGTAACCGG[TT]")
+        self.assertEqual(lamp.subassays[1].definition, "[C]G[T]")
+        self.assertEqual(lamp.subassays[2].definition, "[AA]CC[GG]")
+        lamp = Assay.factory("[A][C](G)[T][AA](CC)[GG][TT]")
+        self.assertEqual(lamp.subassays[0].definition, "[A]CGTAACCGG[TT]")
+        self.assertEqual(lamp.subassays[1].definition, "[C](G)[T]")
+        self.assertEqual(lamp.subassays[2].definition, "[AA](CC)[GG]")
+        lamp = Assay.factory("[A][C]G[T][AA](CC)[GG][TT]")
+        self.assertEqual(lamp.subassays[0].definition, "[A]CGTAACCGG[TT]")
+        self.assertEqual(lamp.subassays[1].definition, "[C]G[T]")
+        self.assertEqual(lamp.subassays[2].definition, "[AA](CC)[GG]")
+        lamp = Assay.factory("[A][C](G)[T][AA]CC[GG][TT]")
+        self.assertEqual(lamp.subassays[0].definition, "[A]CGTAACCGG[TT]")
+        self.assertEqual(lamp.subassays[1].definition, "[C](G)[T]")
+        self.assertEqual(lamp.subassays[2].definition, "[AA]CC[GG]")
 
     def test_amplicon(self):
-        self.assertEqual(Assay.factory("assay", "[A{AA]C}{G[GGG}T]").components["amplicon"], "AAACGGGGT")
-        self.assertEqual(Assay.factory("assay", "N[A{AA]C}{G[GGG}T]N").components["amplicon"], "AAACGGGGT")
+        self.assertEqual(Assay.factory("[AAA]CG[GGGT]").amplicon(), "AAACGGGGT")
+        self.assertEqual(Assay.factory("N[AAA]CG[GGGT]N").amplicon(), "AAACGGGGT")
 
     def test_num_expansions(self):
         """Test expansion number calculation..."""
@@ -117,11 +136,10 @@ class Test(unittest.TestCase):
         self.assertTrue(all(not is_similar(*ele) for ele in zip("AaAaAaA", "xxXXnnNN")))
         self.assertTrue(all(not is_similar(*ele) for ele in zip("acgtACGT", "TGCAtgca")))
 
-    def test_invalid_definition(self):
+    def test_invalid_definitions(self):
         val = [
             "[][]",
             "[]()[]",
-            "[]{}{}[]",
             "[GATTACA",
             "GATTACA]",
             "[GATTACA[]",
@@ -130,23 +148,107 @@ class Test(unittest.TestCase):
             "[GATTACA[CAT]GATTACA]",
             "(GATTACA)C[ATG]A[TTACA]",
             "[GATTACA]C[AT(G]ATTACA)",
-            "{GAT}T[ACA]CATG[AT]T{ACA}",
-            "{GATT[A}CA]CATG[A{T]TACA}",
+            "[A(T]CG[T)A]",
+            "N[A(T]CG[T)A]",
+            "N[A(T]CG[T)A]N",
+            "[A][C]GT[AA]CC[GG][TT]",
+            "[A][C](G)T[AA]CC[GG][TT]",
+            "[A][C]G[T][AA](CC)[GGTT]",
+            "[A][C](G)[T]AA(CC)[GG][TT]",
+            "N[A][C]G[T][AA](C)(C)[GG][TT]N",
         ]
         for idx, ele in enumerate(val, start=1):
             with self.assertRaises(Exception):
-                print(ele, Assay.factory(f"assay-{idx}", ele, [1]))
+                print(ele, Assay.factory(f"assay-{idx}", ele, {1}))
 
-    def test_hits(self):
+    def test_lamp_fip_bip(self):
+        assay = Assay.factory(
+            "GCTCCAGAAA[TTCAAGTGGAGCACTTGGGCTA]TCAGCATCTATAAAATACTTCG[ATGTTGAGGCGAAGTTTAGGT]AACCTT(TTACCGCCGCAATACGAGC)CCCAAGGTTAGT[GGCATTTGGGCTTGTCGGATCA]ATATCCATAATG[CAAAACGGGCGACGT]TTAGGCCCC(AACACCTCCTGCATAACTCTTGC)CAT[TGCTCGAGTCTGTCGACGA]GCGGTTACCTTATCTAACAATATGGTACTGG[GTACGCCACTGGTAGCAGAAGA]TTGA",
+            {666},
+            "Chakraborty-ctxA",
+        )
+        self.assertEqual(assay.fip(), "TGATCCGACAAGCCCAAATGCCATGTTGAGGCGAAGTTTAGGT")
+        self.assertEqual(assay.bip(), "CAAAACGGGCGACGTTCGTCGACAGACTCGAGCA")
+
+    def test_lamp_hits(self):
+        assay = Assay.factory(
+            "GCTCCAGAAA[TTCAAGTGGAGCACTTGGGCTA]TCAGCATCTATAAAATACTTCG[ATGTTGAGGCGAAGTTTAGGT]AACCTT(TTACCGCCGCAATACGAGC)CCCAAGGTTAGT[GGCATTTGGGCTTGTCGGATCA]ATATCCATAATG[CAAAACGGGCGACGT]TTAGGCCCC(AACACCTCCTGCATAACTCTTGC)CAT[TGCTCGAGTCTGTCGACGA]GCGGTTACCTTATCTAACAATATGGTACTGG[GTACGCCACTGGTAGCAGAAGA]TTGA",
+            {666},
+            "Chakraborty-ctxA",
+        )
+        subject = f">sbj\n{''.join(filter(str.isalpha, assay.definition))}\n"
+
+        for subassay in assay.subassays:
+            self.assertIsNotNone(perfect_hits(subassay, subject))
+
+        self.assertIsNotNone(perfect_hits(assay, subject))
+
+        # revcomp LoopF only
+        subject = "GCTCCAGAAA[TTCAAGTGGAGCACTTGGGCTA]TCAGCATCTATAAAATACTTCG[ATGTTGAGGCGAAGTTTAGGT]AACCTT(GCTCGTATTGCGGCGGTAA)CCCAAGGTTAGT[GGCATTTGGGCTTGTCGGATCA]ATATCCATAATG[CAAAACGGGCGACGT]TTAGGCCCC(AACACCTCCTGCATAACTCTTGC)CAT[TGCTCGAGTCTGTCGACGA]GCGGTTACCTTATCTAACAATATGGTACTGG[GTACGCCACTGGTAGCAGAAGA]TTGA"
+        subject = f">sbj\n{''.join(filter(str.isalpha, subject))}\n"
+        print(subject)
+        self.assertIsNone(perfect_hits(assay, subject))
+
+        # revcomp LoopB only
+        subject = "GCTCCAGAAA[TTCAAGTGGAGCACTTGGGCTA]TCAGCATCTATAAAATACTTCG[ATGTTGAGGCGAAGTTTAGGT]AACCTT(TTACCGCCGCAATACGAGC)CCCAAGGTTAGT[GGCATTTGGGCTTGTCGGATCA]ATATCCATAATG[CAAAACGGGCGACGT]TTAGGCCCC(GCAAGAGTTATGCAGGAGGTGTT)CAT[TGCTCGAGTCTGTCGACGA]GCGGTTACCTTATCTAACAATATGGTACTGG[GTACGCCACTGGTAGCAGAAGA]TTGA"
+        subject = f">sbj\n{''.join(filter(str.isalpha, subject))}\n"
+        self.assertIsNone(perfect_hits(assay, subject))
+
+        # revcomp LoopF & LoopB
+        subject = "GCTCCAGAAA[TTCAAGTGGAGCACTTGGGCTA]TCAGCATCTATAAAATACTTCG[ATGTTGAGGCGAAGTTTAGGT]AACCTT(GCTCGTATTGCGGCGGTAA)CCCAAGGTTAGT[GGCATTTGGGCTTGTCGGATCA]ATATCCATAATG[CAAAACGGGCGACGT]TTAGGCCCC(GCAAGAGTTATGCAGGAGGTGTT)CAT[TGCTCGAGTCTGTCGACGA]GCGGTTACCTTATCTAACAATATGGTACTGG[GTACGCCACTGGTAGCAGAAGA]TTGA"
+        subject = f">sbj\n{''.join(filter(str.isalpha, subject))}\n"
+        self.assertIsNone(perfect_hits(assay, subject))
+
+        # revcomp subject
+        subject = f">sbj\n{Seq.reverse_complement(''.join(filter(str.isalpha, assay.definition)))}\n"
+        self.assertIsNotNone(perfect_hits(assay, subject))
+
+        # test loop/probe right up-against primer
+        assay = Assay.factory(
+            "TCGCTG[CCAATAACGGCAAAGATATG]CTGATCATGCTGCACCAAATGGGCAATCACGGGCCTGCGTATTTTAAGCGATATGA[TGAAAAGTTTGCCAAATTCA]CGCCAGTGTGTGAAGGTAATGAGCTTGCC[AAGTGCGAACATCAGTCCTT]GATCAATGCTTATGACAATGCCTTG[CTTGCCACCGATGATTTCAT]CGCTCAAA(GTATCCAGTGGCTGCAGACG)[CACAGCAATGCCTATGAT]GTCTCAATGCTGTATGTCAGCGATCATGGCGAAAGTCTGGGTGAGAACGGT[GTCTATCTACATGGTATGCC]AAATGC",
+            {2},
+            "NG_056412.1_1129-1448_00001",
+        )
+        subject = """
+            >NG_056412.1 Escherichia coli EC15-101 mcr-1 gene for phosphoethanolamine--lipid A transferase MCR-1.12, complete CDS
+            ATGATGCACCATACTTCTGTGTGGTACCGACGCTCGGTCAGTCCGTTTGTTCTTGTGGCGAGTGTTGCCG
+            TTTTCTTGACCGCGACCGCCAATCTTACCTTTTTTGATAAAATCAGCCAAACCTATCCCATCGCGGACAA
+            TCTCGGCTTTGTGCTGACGATCGCTGTCGTGCTCTTTGGCGCGATGCTACTGATCACCACGCTGTTATCA
+            TCGTATCGCTATGTGCTAAAGCCTGTGTTGATTTTGCTATTAATCATGGGCGCGGTGACCAGTTATTTTA
+            CTGACACTTATGGCACGGTCTATGATACGACCATGCTCCAAAATGCCCTACAGACCGACCAAGCCGAGAC
+            CAAGGATCTATTAAACGCAGCGTTTATCATGCGTATCATTGGTTTGGGTGTGCTACCAAGTTTGCTTGTG
+            GCTTTTGTTAAGGTGGATTATCCGACTTGGGGCAAGGGTTTGATGCGCCGATTGGGCTTGATCGTGGCAA
+            GTCTTGCGCTGATTTTACTGCCTGTGGTGGCGTTCAGCAGTCATTATGCCAGTTTCTTTCGCGTGCATAA
+            GCCGCTGCGTAGCTATGTCAATCCGATCATGCCAATCTACTCGGTGGGTAAGCTTGCCAGTATTGAGTAT
+            AAAAAAGCCAGTGCGCCAAAAGATACCATTTATCACGCCAAAGACGCGGTACAAGCAACCAAGCCTGATA
+            TGCGTAAGCCACGCCTAGTGGTGTTCGTCGTCGGTGAGACGGCACGCGCCGATCATGTCAGCTTCAATGG
+            CTATGAGCGCGATACTTTCCCACAGCTTGCCAAGATCGATGGCGTGACCAATTTTAGCAATGTCACATCG
+            TGCGGCACATCGACGGCGTATTCTGTGCCGTGTATGTTCAGCTATCTGGGCGCGGATGAGTATGATGTCG
+            ATACCGCCAAATACCAAGAAAATGTGCTGGATACGCTGGATCGCTTGGGCGTAAGTATCTTGTGGCGTGA
+            TAATAATTCGGACTCAAAAGGCGTGATGGATAAGCTGCCAAAAGCGCAATTTGCCGATTATAAATCCGCG
+            ACCAACAACGCCATCTGCAACACCAATCCTTATAACGAATGCCGCGATGTCGGTATGCTCGTTGGCTTAG
+            ATGACTTTGTCGCTGCCAATAACGGCAAAGATATGCTGATCATGCTGCACCAAATGGGCAATCACGGGCC
+            TGCGTATTTTAAGCGATATGATGAAAAGTTTGCCAAATTCACGCCAGTGTGTGAAGGTAATGAGCTTGCC
+            AAGTGCGAACATCAGTCCTTGATCAATGCTTATGACAATGCCTTGCTTGCCACCGATGATTTCATCGCTC
+            AAAGTATCCAGTGGCTGCAGACGCACAGCAATGCCTATGATGTCTCAATGCTGTATGTCAGCGATCATGG
+            CGAAAGTCTGGGTGAGAACGGTGTCTATCTACATGGTATGCCAAATGCCTTTGCACCAAAAGAACAGCGC
+            AGTGTGCCTGCATTTTTCTGGACGGATAAGCAAACTGGCATCACGCCAATGGCAACCGATACCGTCCTGA
+            CCCATGACGCGATCACGCCGACATTATTAAAGCTGTTTGATGTCACCGCGGACAAAGTCAAAGACCGCAC
+            CGCATTCATCCGCTGA
+        """
+        subject = "\n".join((ele.strip() for ele in subject[1:].split("\n")))
+        self.assertIsNotNone(perfect_hits(assay, subject))
+
+    def test_pcr_hits(self):
         #                    5'<-> 3'
         # CCCCGCCGCGGGCCGGCGCG <-> CGCGCCGGCCCGCGGCGGGG
         # TTTGGGTGTGGTGTGGTGGT <-> ACCACCACACCACACCCAAA
-        assay = Assay.factory("assay", "[CCCCGCCGCGGGCCGGCGCG]AAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAA[TTTGGGTGTGGTGTGGTGGT]")
+        assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG]AAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAA[TTTGGGTGTGGTGTGGTGGT]")
         self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGAAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAATTTGGGTGTGGTGTGGTGGT\n"))
         self.assertIsNotNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAATTTTTTTTTTAATATAATATATAAATATAATTTTTTTTTTCGCGCCGGCCCGCGGCGGGG\n"))
         self.assertIsNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAAAAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAACCCCGCCGCGGGCCGGCGCG\n"))
         self.assertIsNone(perfect_hits(assay, ">sub\nCGCGCCGGCCCGCGGCGGGGTTTTTTTTTTAATATAATATATAAATATAATTTTTTTTTTTTTGGGTGTGGTGTGGTGGT\n"))
-        assay = Assay.factory("assay", "[CCCCGCCGCGGGCCGGCGCG]AAAAAAAAAA(TTATATTTATATATTATATT)AAAAAAAAAA[TTTGGGTGTGGTGTGGTGGT]")
+        assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG]AAAAAAAAAA(TTATATTTATATATTATATT)AAAAAAAAAA[TTTGGGTGTGGTGTGGTGGT]")
         self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGAAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAATTTGGGTGTGGTGTGGTGGT\n"))
         self.assertIsNotNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAATTTTTTTTTTAATATAATATATAAATATAATTTTTTTTTTCGCGCCGGCCCGCGGCGGGG\n"))
         self.assertIsNone(perfect_hits(assay, ">sub\nTTTGGGTGTGGTGTGGTGGTAAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAACGCGCCGGCCCGCGGCGGGG\n"))
@@ -157,8 +259,7 @@ class Test(unittest.TestCase):
         self.assertIsNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGTTTTTTTTTTTTATATTTATATATTATATTTTTTTTTTTTACCACCACACCACACCCAAA\n"))
         # from brad
         assay = Assay.factory(
-            "assay",
-            "CAGCTG[TGCGTCGGCAAACCAATGCT]ATTGAATCACTAGAAGGTCGAGTAACAACTCTTGA(GGCCAGCTTAAAACCCGTTC)AAGACATGGCAAAGACCATATCATCCCTGAATCGCAGCTGT[GCCGAAATGGTTGCAAAATACG]ACCTAC",
+            "CAGCTG[TGCGTCGGCAAACCAATGCT]ATTGAATCACTAGAAGGTCGAGTAACAACTCTTGA(GGCCAGCTTAAAACCCGTTC)AAGACATGGCAAAGACCATATCATCCCTGAATCGCAGCTGT[GCCGAAATGGTTGCAAAATACG]ACCTAC"
         )
         self.assertIsNotNone(
             perfect_hits(
@@ -242,95 +343,91 @@ class Test(unittest.TestCase):
                             self.assertEqual("".join(decode_btop(qry, hsp1.btop, sbj=False)).upper(), qaln)
                             self.assertEqual("".join(decode_btop(qry, hsp1.btop)).upper(), saln)
 
-    def test_delimify(self):
+    def test_embrace(self):
         print()
 
         # 001233345567789AABC
-        # C[ATG(]AT)TA[CAC]AT
-        assay = Assay.factory("assay", "C[ATG(]AT)TA[CAC]AT")
+        # C[ATG](AT)TA[CAC]AT
+        assay = Assay.factory("C[ATG](AT)TA[CAC]AT")
 
         # 0123456789ABC    0 123  45 67 89A BC
-        # CATGATTACACAT    C[ATG(]AT)TA[CAC]AT
-        # CAT-ATTACA-AT -> C[AT-(]AT)TA[CA-]AT
+        # CATGATTACACAT    C[ATG](AT)TA[CAC]AT
+        # CAT-ATTACA-AT -> C[AT-](AT)TA[CA-]AT
         qaln, saln = "CATGATTACACAT", "CAT-ATTACA-AT"
-        self.assertEqual("".join(assay.delimify(qaln, qaln)), "C[ATG(]AT)TA[CAC]AT")
-        self.assertEqual("".join(assay.delimify(qaln, saln)), "C[AT-(]AT)TA[CA-]AT")
+        self.assertEqual("".join(assay.embrace(qaln, qaln)), "C[ATG](AT)TA[CAC]AT")
+        self.assertEqual("".join(assay.embrace(qaln, saln)), "C[AT-](AT)TA[CA-]AT")
 
         # 01234566789ABC    0 123  45 667 89A BC
-        # CATGATT-ACACAT    C[ATG(]AT)T-A[CAC]AT
-        # CAT-ATTTACA-AT -> C[AT-(]AT)TTA[CA-]AT
+        # CATGATT-ACACAT    C[ATG](AT)T-A[CAC]AT
+        # CAT-ATTTACA-AT -> C[AT-](AT)TTA[CA-]AT
         qaln, saln = "CATGATT-ACACAT", "CAT-ATTTACA-AT"
-        self.assertEqual("".join(assay.delimify(qaln, qaln)), "C[ATG(]AT)T-A[CAC]AT")
-        self.assertEqual("".join(assay.delimify(qaln, saln)), "C[AT-(]AT)TTA[CA-]AT")
+        self.assertEqual("".join(assay.embrace(qaln, qaln)), "C[ATG](AT)T-A[CAC]AT")
+        self.assertEqual("".join(assay.embrace(qaln, saln)), "C[AT-](AT)TTA[CA-]AT")
 
         # 0001234567798ABC    000 123  45 677798A BC
-        # --CATGATTA-CACAT    --C[ATG(]AT)TA-[CAC]AT
-        # CCCATGA--ATC-C-T -> CCC[ATG(]A-)-AT[C-C]-T
+        # --CATGATTA-CACAT    --C[ATG](AT)TA-[CAC]AT
+        # CCCATGA--ATC-C-T -> CCC[ATG](A-)-AT[C-C]-T
         qaln, saln = "--CATGATTA-CACAT", "CCCATGA--ATC-C-T"
-        self.assertEqual("".join(assay.delimify(qaln, qaln)), "--C[ATG(]AT)TA-[CAC]AT")
-        self.assertEqual("".join(assay.delimify(qaln, saln)), "CCC[ATG(]A-)-AT[C-C]-T")
+        self.assertEqual("".join(assay.embrace(qaln, qaln)), "--C[ATG](AT)TA-[CAC]AT")
+        self.assertEqual("".join(assay.embrace(qaln, saln)), "CCC[ATG](A-)-AT[C-C]-T")
 
         # 000122222333456789ABC    000 1111123  3345 67 89A BC
         # C--A----TG--ATTACACAT    C--[A----TG]--(AT)TA[CAC]AT
         # CAAATTTTTGGGATTACACAT -> CAA[ATTTTTG]GG(AT)TA[CAC]AT
         qaln, saln = "C--A----TG--ATTACACAT", "CAAATTTTTGGGATTACACAT"
-        self.assertEqual("".join(assay.delimify(qaln, qaln)), "C--[A----TG]--(AT)TA[CAC]AT")
-        self.assertEqual("".join(assay.delimify(qaln, saln)), "CAA[ATTTTTG]GG(AT)TA[CAC]AT")
+        self.assertEqual("".join(assay.embrace(qaln, qaln)), "C--[A----TG]--(AT)TA[CAC]AT")
+        self.assertEqual("".join(assay.embrace(qaln, saln)), "CAA[ATTTTTG]GG(AT)TA[CAC]AT")
 
         # 0122222333456789ABC    0 1222223 33 45 67 89A BC
         # CAT----G--ATTACACAT    C[AT----G]--(AT)TA[CAC]AT
         # CATTTTTGGGATTACACAT -> C[ATTTTTG]GG(AT)TA[CAC]AT
         qaln, saln = "CAT----G--ATTACACAT", "CATTTTTGGGATTACACAT"
-        self.assertEqual("".join(assay.delimify(qaln, qaln)), "C[AT----G]--(AT)TA[CAC]AT")
-        self.assertEqual("".join(assay.delimify(qaln, saln)), "C[ATTTTTG]GG(AT)TA[CAC]AT")
+        self.assertEqual("".join(assay.embrace(qaln, qaln)), "C[AT----G]--(AT)TA[CAC]AT")
+        self.assertEqual("".join(assay.embrace(qaln, saln)), "C[ATTTTTG]GG(AT)TA[CAC]AT")
 
-        assay = Assay.factory("assay", "[ATG(]AT)TA[CAC]")
+        assay = Assay.factory("[ATG](AT)TA[CAC]")
         qaln, saln = "AT----G--ATTACAC", "ATTTTTGGGATTACAC"
-        self.assertEqual("".join(assay.delimify(qaln, qaln)), "[AT----G]--(AT)TA[CAC]")
-        self.assertEqual("".join(assay.delimify(qaln, saln)), "[ATTTTTG]GG(AT)TA[CAC]")
+        self.assertEqual("".join(assay.embrace(qaln, qaln)), "[AT----G]--(AT)TA[CAC]")
+        self.assertEqual("".join(assay.embrace(qaln, saln)), "[ATTTTTG]GG(AT)TA[CAC]")
 
-    def test_parse_assay(self):
+    def test_parse_assays(self):
         path = root / "assay.tsv"
         with path.open() as file:
             self.assertListEqual(
                 list(parse_assays(file)),
                 [
-                    Assay.factory("assay-1", "[GAT]T[ACA]", {666}),
-                    Assay.factory("assay-2", "[GAT](T)[ACA]", {666, 662}),
-                    Assay.factory("assay-3", "[GAT](T)[ACA]", {666, 662}),
-                    Assay.factory("assay-4", "[GATTACA]", {666, 662}),
-                    Assay.factory("assay-5", "[GA{T]T}A{[CA}]", {666, 662}),
+                    Assay.factory("[GAT]T[ACA]", {"666"}, "assay-1"),
+                    Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-2"),
+                    Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-3"),
+                    Assay.factory("[GATTACA]", {"666", "662"}, "assay-4"),
                 ],
             )
             file.seek(0)
             self.assertListEqual(
                 list(parse_assays(file, context=(0, 1))),
                 [
-                    Assay.factory("assay-1", "[GAT]T[ACA]", {666}),
-                    Assay.factory("assay-2", "[GAT](T)[ACA]", {666, 662}),
-                    Assay.factory("assay-3", "[GAT](T)[ACA]T", {666, 662}),
-                    Assay.factory("assay-4", "[GATTACA]T", {666, 662}),
-                    Assay.factory("assay-5", "[GA{T]T}A{[CA}]T", {666, 662}),
+                    Assay.factory("[GAT]T[ACA]", {"666"}, "assay-1"),
+                    Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-2"),
+                    Assay.factory("[GAT](T)[ACA]T", {"666", "662"}, "assay-3"),
+                    Assay.factory("[GATTACA]T", {"666", "662"}, "assay-4"),
                 ],
             )
             file.seek(0)
             self.assertListEqual(
                 list(parse_assays(file, context=(1, 0))),
                 [
-                    Assay.factory("assay-1", "[GAT]T[ACA]", {666}),
-                    Assay.factory("assay-2", "[GAT](T)[ACA]", {666, 662}),
-                    Assay.factory("assay-3", "T[GAT](T)[ACA]", {666, 662}),
-                    Assay.factory("assay-4", "T[GATTACA]", {666, 662}),
-                    Assay.factory("assay-5", "T[GA{T]T}A{[CA}]", {666, 662}),
+                    Assay.factory("[GAT]T[ACA]", {"666"}, "assay-1"),
+                    Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-2"),
+                    Assay.factory("T[GAT](T)[ACA]", {"666", "662"}, "assay-3"),
+                    Assay.factory("T[GATTACA]", {"666", "662"}, "assay-4"),
                 ],
             )
             file.seek(0)
             answer = [
-                Assay.factory("assay-1", "[GAT]T[ACA]", {666}),
-                Assay.factory("assay-2", "[GAT](T)[ACA]", {666, 662}),
-                Assay.factory("assay-3", "CAT[GAT](T)[ACA]TAG", {666, 662}),
-                Assay.factory("assay-4", "CAT[GATTACA]TAG", {666, 662}),
-                Assay.factory("assay-5", "CAT[GA{T]T}A{[CA}]TAG", {666, 662}),
+                Assay.factory("[GAT]T[ACA]", {"666"}, "assay-1"),
+                Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-2"),
+                Assay.factory("CAT[GAT](T)[ACA]TAG", {"666", "662"}, "assay-3"),
+                Assay.factory("CAT[GATTACA]TAG", {"666", "662"}, "assay-4"),
             ]
             self.assertListEqual(list(parse_assays(file, context=(3, 3))), answer)
             file.seek(0)

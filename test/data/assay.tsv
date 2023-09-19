@@ -3,4 +3,3 @@ assay-1	666	[GAT]T[ACA]
 assay-2	666;662	[GAT](T)[ACA]
 assay-3	666;662	CAT[GAT](T)[ACA]TAG
 assay-4	666;662	CAT[GATTACA]TAG
-assay-5	666;662	CAT[GA{T]T}A{[CA}]TAG

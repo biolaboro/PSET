@@ -43,24 +43,16 @@ rule makeblastdb:
     run:
         cmd = (
             "makeblastdb",
-            "-in",
-            "-",
-            "-input_type",
-            "fasta",
-            "-dbtype",
-            "nucl",
-            "-title",
-            params.title,
+            *("-in", "-"),
+            *("-input_type", "fasta"),
+            *("-dbtype", "nucl"),
+            *("-title", params.title),
             "-parse_seqids",
             "-hash_index",
-            "-out",
-            params.out,
-            "-blastdb_version",
-            "5",
-            "-logfile",
-            log.log,
-            "-taxid",
-            params.taxid,
+            *("-out", params.out),
+            *("-blastdb_version", "5"),
+            *("-logfile", log.log),
+            *("-taxid", params.taxid),
         )
         with Popen(cmd, stdin=PIPE, universal_newlines=True) as pipe:
             with pipe.stdin as stdin:
@@ -87,7 +79,7 @@ rule metadata:
                 print(*(record[key] for key in fields), sep="\t", file=file2)
 
 
-rule update:
+rule target_update:
     input:
         path_provision,
         path_blast,
