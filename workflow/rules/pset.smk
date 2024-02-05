@@ -1,8 +1,6 @@
 rule assay:
     message:
         "output assay data to JSON"
-    input:
-        tsv=config["file"],
     output:
         jsn=expand(subroot / "assay.json", id=assays),
     params:
@@ -11,21 +9,20 @@ rule assay:
         parent=root,
     threads: 1
     run:
-        with open(input.tsv) as tsv:
-            for assay in parse_assays(tsv, context=params.context, target_type=int):
-                keys = assay.kflanks() if config["flank"] else ("amplicon",)
-                camp = assay.camplicon()
-                contexts = {}
-                # calculate the actual amount of 5'/3'-context available per component query
-                for key in keys:
-                    coor = assay.acoors() if key == "amplicon" else assay.ccoors[key]
-                    contexts[key] = (min(coor[0], params.context[0]), min(len(camp) - coor[1], params.context[1]))
-                lcl = {key: str(next(assay.records(key, expand=1, context=params.context)).seq) for key in keys}
-                qry = dict(lcl=lcl, glc=assay.components, ctx=contexts)
-                # setup query for local and glocal alignment
-                data = dict(zip(assay.key(), assay.val()), type=type(assay).__name__, coor=assay.ccoors, qry=qry)
-                with params.parent.joinpath(assay.id).joinpath("assay.json").open("w") as jsn:
-                    json.dump(data, jsn, indent=4)
+        for assay in assays.values():
+            keys = assay.kflanks() if config["flank"] else ("amplicon",)
+            camp = assay.camplicon()
+            contexts = {}
+            # calculate the actual amount of 5'/3'-context available per component query
+            for key in keys:
+                coor = assay.acoors() if key == "amplicon" else assay.ccoors[key]
+                contexts[key] = (min(coor[0], params.context[0]), min(len(camp) - coor[1], params.context[1]))
+            lcl = {key: str(next(assay.records(key, expand=1, context=params.context)).seq) for key in keys}
+            qry = dict(lcl=lcl, glc=assay.components, ctx=contexts)
+            # setup query for local and glocal alignment
+            data = dict(zip(assay.key(), assay.val()), type=type(assay).__name__, coor=assay.ccoors, qry=qry)
+            with params.parent.joinpath(assay.id).joinpath("assay.json").open("w") as jsn:
+                json.dump(data, jsn, indent=4)
 
 
 rule local:

@@ -27,7 +27,6 @@ subroot = Path(config["out"]) / db.name / "{id}"
 base = Path(workflow.basedir)
 
 # load assays
-ids = config.get("assays")
-ids = set(ids.split(",")) if ids else ids
+ids = set(config.get("assays", "").split(",")) - {""}
 with open(config["file"]) as file:
     assays = {ele.id: ele for ele in parse_assays(file, context=context, target_type=int) if not ids or ele.id in ids}

@@ -329,7 +329,7 @@ def parse_args(argv):
     parser.add_argument("--optional-loop", action="store_true", help="the flag to make LF/LB component generation optional")
     parser.add_argument(
         "-cstr",
-        help="the configuration override string(s), format='section:key=val', example: 'GLOBAL:PRIMER_NUM_RETURN=500'",
+        help="the configuration override string(s), format='section:key=val,...', example: 'GLOBAL:PRIMER_NUM_RETURN=500'",
         nargs="+",
         default=[],
     )

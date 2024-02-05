@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from taxa.taxa import ancestors, session_scope
 
-from pset.assay import Assay, align_type, decode_btop
+from pset.assay import AlignType, Assay, align_type, decode_btop
 from pset.util import fields_8CB, iter_hsps
 
 
@@ -44,36 +44,43 @@ def main(argv):
         mapped = {ele[0]: ele for ele in json.load(file).values()}
     # map accession to taxid
     with open(args.taxa) as file:
-        taxa = dict(line.strip().split("\t") for line in file)
+        taxa = {key: int(val) for key, val in (line.strip().split("\t") for line in file)}
     # map taxid to lineage
     engine = create_engine(args.dburl)
     with session_scope(sessionmaker(bind=engine)) as session:
-        lineages = {ele: set(ele[0] for ele in ancestors(session, ele)) for ele in set(taxa.values())}
-        nn_taxa = {ancestors(session, ele)[-1][3] for ele in assay.targets}
+        lineages = {int(ele): set(ele.tax_id for ele in ancestors(session, ele)) for ele in set(taxa.values())}
+        nn_taxa = {ancestors(session, ele)[-1].parent_tax_id for ele in assay.targets}
 
     # process glsearch hits
-    result = namedtuple("Result", ("qaln", "saln", "qcov", "atypes", "psim", "qsim"))
+    result = namedtuple("Result", ("qaln", "saln", "astr", "atypes", "qcov", "psim", "qsim"))
     sbj_results = defaultdict(list)
     hsp_results = {}
     # process BLAST+ results
     for hsp in iter_hsps(SearchIO.parse(args.alignment, "blast-tab", comments=True, fields=fields_8CB)):
         # calculate query similarity percentage and mutations
-        qry = next(assay.records(hsp.query_id)).seq[hsp.query_start : hsp.query_end]
+        qry = next(assay.records(hsp.query_id)).seq[hsp.query_start: hsp.query_end]
         qry = str(qry if hsp.query_strand >= 0 else qry.reverse_complement())
         qaln = "".join(decode_btop(qry, hsp.btop, sbj=False))
         saln = "".join(decode_btop(qry, hsp.btop))
         qcov = (hsp.query_end - hsp.query_start) / len(qry)
-        atypes = Counter((align_type(*ele).name for ele in zip(qaln, saln)))
+        alignment = [align_type(*ele) for ele in zip(qaln, saln)]
+        astr = "".join(str(ele.value) for ele in alignment)
+        atypes = Counter(ele.name for ele in alignment)
         psim = sum(not (ele.islower() or ele == "-") for ele in saln) / hsp.aln_span
         qsim = qcov * psim
         sbj_id = re.sub(r":[0-9]+$", "", hsp.hit_id)  # acc.ver...:nth-alignment
         # aggregate HSPs by the subject accession)
         sbj_results[sbj_id].append(hsp)
-        hsp_results[hsp.hit_id] = result(qaln, saln, qcov, atypes, psim, qsim)
+        hsp_results[hsp.hit_id] = result(qaln, saln, astr, atypes, qcov, psim, qsim)
 
     # process hits
     near = set()
-    obj = dict(assay=dict(zip(assay.key(), assay.val())), hits=[], near=[])
+    obj = dict(
+        assay=dict(zip(assay.key(), assay.val())),
+        atype=[ele.name for ele in AlignType],
+        hits=[],
+        near=[],
+    )
     dkwargs = dict(dFR=args.dFR, dF3F2=args.dF3F2, dF2F1c=args.dF2F1c, dF1cB1c=args.dF1cB1c)
     for key, val in sbj_results.items():  # iter subject id -> query result mapping
         # collect HSPs of queries

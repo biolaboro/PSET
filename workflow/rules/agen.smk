@@ -4,12 +4,12 @@ from Bio import SeqIO
 
 base = Path(workflow.basedir)
 root = base.parent
-path_assay = Path("resources") / "assay"
+path_out = Path(config.get("out", Path("resources") / "assay"))
+os.makedirs(path_out, exist_ok=True)
 
 path_conf = root / "conf" / "agen"
 
 path_file = config["file"]
-lab = config.get("lab", "")
 
 modes = config["mode"].split(",")
 confs = {ele.stem: ele for ele in path_conf.glob("*.json")}
@@ -20,7 +20,7 @@ rule split:
     input:
         fna=path_file,
     output:
-        fna=path_assay / lab / "{acc}" / "seq.fna",
+        fna=path_out / "{acc}" / "seq.fna",
     run:
         for record in SeqIO.parse(input.fna, "fasta"):
             SeqIO.write(record, output.fna, "fasta")
@@ -30,11 +30,11 @@ rule agen:
     message:
         "generate assay candidates"
     input:
-        fna=path_assay / lab / "{acc}" / "seq.fna",
+        fna=path_out / "{acc}" / "seq.fna",
     output:
-        jsn=path_assay / lab / "{acc}" / "{mode}.{conf}.json",
+        jsn=path_out / "{acc}" / "{mode}.{conf}.json",
     log:
-        log=path_assay / lab / "{acc}" / "{mode}.{conf}.log",
+        log=path_out / "{acc}" / "{mode}.{conf}.log",
     params:
         script=root / "scripts" / "agen" / "agen.py",
         conf=lambda wildcards, output: confs[wildcards.conf],
@@ -60,11 +60,11 @@ rule agen:
 
 rule rank:
     input:
-        jsn=expand(path_assay / lab / "{{acc}}" / "{{mode}}.{conf}.json", conf=confs),
+        jsn=expand(path_out / "{{acc}}" / "{{mode}}.{conf}.json", conf=confs),
     output:
-        jsn=path_assay / lab / "{acc}" / "{mode}.json",
+        jsn=path_out / "{acc}" / "{mode}.json",
     log:
-        log=path_assay / lab / "{acc}" / "{mode}.log",
+        log=path_out / "{acc}" / "{mode}.log",
     params:
         script=root / "scripts" / "agen" / "rank.jq",
         targets=config.get("targets", "1"),
@@ -91,7 +91,7 @@ rule tableize:
     input:
         jsn=rules.rank.output.jsn,
     output:
-        tsv=path_assay / lab / "{acc}" / "{mode}.tab",
+        tsv=path_out / "{acc}" / "{mode}.tab",
     params:
         script=root / "scripts" / "agen" / "tableize.jq",
         targets=config.get("targets", "1"),
@@ -105,7 +105,7 @@ rule assayfy:
     input:
         jsn=rules.rank.output.jsn,
     output:
-        tsv=path_assay / lab / "{acc}" / "{mode}.tsv",
+        tsv=path_out / "{acc}" / "{mode}.tsv",
     params:
         script=root / "scripts" / "agen" / "assayfy.jq",
         targets=config.get("targets", "1"),

@@ -4,14 +4,15 @@
 
 The PCR Signature Erosion Tool (PSET) calculates the *in silico* detection capability of assays based on assay type, sequence alignment, and taxonomic lineage of subject sequences.
 
-![report](report.png)
+![](report.png)
 
 ## Setup
 
 Create a [Conda](https://docs.conda.io/en/latest/) environment with [Mamba](https://github.com/mamba-org/mamba) and activate the **pset** environment.
 ```bash
 mamba env create -f workflow/envs/env.yml
-conda activate pset
+mamba env config vars set PYTHONPATH="$(pwd)" -n pset
+mamba activate pset
 ```
 
 Set the **PYTHONPATH** environment variable.
@@ -29,7 +30,36 @@ Download a data set of 500 *Ebolavirus* sequences and build a BLAST+ database.
 snakemake --cores 1 -s workflow/rules/setup.smk ebov
 ```
 
-## Example
+## Example: APP
+
+Start the server and then navigate to http://127.0.0.1:8000/.
+```bash
+shiny run --reload --launch-browser app/app.py
+```
+
+### PSET
+
+At the **PSET** tab, select the example EBOV.tsv assay file. This will populate the **input** tab on the right. Optionally, customize parameters on the left menu under the **parameters** and **threading** accordion tabs. Select the EBOV database created during set. Click the **run** button. Progress will be indicated on the bottom-right pop-up window. Once complete, load the resulting tables by clicking the **output** tab on the right. Clicking each subtab will generate and load each table and plot. Loading times may vary.
+
+### Download
+
+At the **DOWNLOAD** tab, click the **listing** button at the top left. This will connect to NCBI and download the listing of available databases. Once populated, the list will become available in the drop-down and a description for each will appear in a table on the right. Select "16S_ribosomal_RNA" and click **download database**. Progress will be indicated on the bottom-right pop-up window. These databases will become available in the **PSET** tab. If not, try restarting the server.
+
+### Generate
+
+For this example, extract accession NC_024781.1 from the EBOV BLAST database (or, download directly from NCBI) into a FASTA file.
+```
+mkdir -p resources/fasta
+blastdbcmd -db resources/blast/EBOV/EBOV -entry NC_024781.1 > resources/fasta/NC_024781.1.fna
+```
+
+At the **GENERATE** tab, load the FASTA file, set Primer3 paramters (or keep defaults) and click run. Progress will be indicated in the bottom-right pop-up window. Results will appear in the table on the right.
+
+### TAXA
+
+At the **TAXA** tab, enter an NCBI Taxonomy identifier and click **run**. Results of its ancestral lineage will appear in the table on the right. Results are based on the local taxonomy database that was created during setup.
+
+## Example: CLI
 
 Run the analysis.
 ```bash

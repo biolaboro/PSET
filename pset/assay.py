@@ -426,6 +426,7 @@ class AlignType(Enum):
     INS = auto()  # insertion
     DEL = auto()  # deletion
     DIS = auto()  # insertion
+    IDN = auto()  # identity
     SIM = auto()  # similar
     GAP = auto()  # gap
     UNK = auto()  # unknown
@@ -458,6 +459,8 @@ def align_type(ref, alt):
         return AlignType.TRS
     elif (ref, alt) in trv:
         return AlignType.TRV
+    elif ref == alt:
+        return AlignType.IDN
     else:
         return AlignType.SIM if is_similar(ref, alt) else AlignType.DIS
 
