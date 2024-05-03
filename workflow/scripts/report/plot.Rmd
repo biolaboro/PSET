@@ -1,0 +1,273 @@
+---
+title: "PSET Analysis"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: html_document
+params:
+  json: !r list.files("/Users/m29605/code/pset/results/vac/DRC_MPOX", pattern = "call.json", full.names = T, recursive = T)
+  cores: 8
+---
+
+```{r library, echo=F, message=F}
+library(dplyr)
+library(ggplot2)
+library(readr)
+library(stringr)
+knitr::opts_chunk$set(echo = F)
+```
+
+```{r setup}
+json <- params$json
+cores <- params$cores
+
+calls <- c("TP", "FN", "FP", "TN", "XX")
+keys <- c("F", "P", "R", "F3", "F2", "LF", "F1c", "B1c", "LB", "B2", "B3")
+muts <- (
+  json %>%
+    head(1) %>%
+    read_file() %>%
+    jqr::jq(cmd = ".atype") %>%
+    jsonlite::fromJSON()
+)
+
+
+df.assay <- (
+  json %>%
+    lapply(\(ele) jsonlite::fromJSON(jqr::jq(read_file(ele), cmd = ".assay"))) %>%
+    bind_rows()
+)
+max_length <- (
+  with(
+    df.assay,
+    c(str_match_all(definition, "\\[[^\\[\\]]+\\]"), str_match_all(definition, "\\([^\\(\\)]+\\)"))
+  ) %>%
+    unlist() %>%
+    str_length() %>%
+    max() - 2
+)
+str_wrap_force <- function(x, w = 10, c = "\n") {
+  str_c(
+    lapply(
+      seq.int(1, ceiling(str_length(x) / w)),
+      \(idx) str_sub(x, (idx - 1) * w + 1, idx * w)
+    ),
+    collapse = c
+  )
+}
+str_wrap_force_labeller <- (
+  unique(df.assay$id) %>%
+    sapply(str_wrap_force) %>%
+    c(setNames(calls, calls)) %>%
+    as_labeller()
+)
+```
+
+Heatmap...
+
+```{r heat, fig.width=10, fig.height=10}
+cmd <- "
+    .assay.id as $id |
+    .hits | [
+        map(.evals | to_entries | map({id: $id, com: .key, heat: .value.psim, qaln: .value.qaln, saln: .value.saln})),
+        map(.calls | to_entries | map(.key as $key | .value | map({call: $key, acc: .})[]))
+    ] |
+        transpose |
+        map(.[0][] as $x | .[1][] as $y | ($x + $y))
+"
+
+df.data <- (
+  json %>%
+    parallel::mclapply(
+      function(ele) {
+        read_file(ele) %>%
+          jqr::jq(cmd = cmd) %>%
+          jsonlite::fromJSON()
+      },
+      mc.cores = cores
+    ) %>%
+    bind_rows() %>%
+    mutate(
+      com = factor(com, levels = rev(keys)),
+      call = factor(call, levels = calls),
+      `identity %` = 100 * heat
+    )
+)
+
+ggplot(df.data, aes(x = acc, y = com)) +
+  geom_tile(aes(fill = `identity %`)) +
+  facet_grid(id ~ call, scales = "free", space = "free_y") +
+  scale_fill_gradientn(
+    colors = c("red", "#FF2400", "orange", "green", "darkgreen"),
+    labels = c("0", "75", "|\n80", "|\n99", "   100"),
+    values = c(0.0, 0.75, 0.8, 0.99, 1.0),
+    breaks = c(0, 75, 80, 99, 100),
+    limits = c(0, 100)
+  ) +
+  labs(x = "accession", y = "component") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(size = 6),
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    legend.text = element_text(size = 6),
+    panel.background = element_rect(fill = "#F3F3F3"),
+    panel.border = element_rect(fill = NA, linetype = "dotted"),
+    strip.text.x = element_text(hjust = 0.5, vjust = 0),
+    strip.text.y = element_text(hjust = 0, vjust = 0.5, angle = 0, size = 6),
+    text = element_text(family = "mono")
+  )
+```
+
+Set cover...
+
+```{r cover, fig.width=10}
+filter(df.data, call == "TP") %>%
+  arrange(acc) %>%
+  distinct(acc, .keep_all = T) %>%
+  count(id) %>%
+  arrange(desc(n)) %>%
+  ggplot(aes(x = id, y = n)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = paste0(" ", n)), family = "mono", size = 2, hjust = 0) +
+  coord_flip() +
+  theme_minimal() +
+  theme(
+    axis.text = element_text(size = 6),
+    legend.text = element_text(size = 6),
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(fill = NA, linetype = "dotted"),
+    text = element_text(family = "mono")
+  )
+```
+
+Positional mutations...
+
+```{r positional_mutations, fig.width=10, fig.height=10}
+cmd <- '
+    def qpos(str):
+        # "GATTACA"    -> [1,2,3,4,5,6,7]
+        # "GA--TT-ACA" -> [1,2,2,2,3,4,4,5,6,7]
+        str | split("") | map(if . == "-" then 0 else 1 end) | to_entries as $arr | $arr | map($arr[:(.key + 1)] | map(.value) | add);
+
+    .assay.id as $id |
+    .atype as $atype |
+    .hits | [
+        map(.evals | to_entries | map({com: .key, psim: .value.psim, astr: .value.astr, qaln: .value.qaln})),
+        # select TP/FN only
+        map(.calls | to_entries | map(select(.key == "TP" or .key == "FN") | {call: .key, acc: .value[0], nseq: (.value | length)}))
+    ] |
+        transpose |
+        # select non-perfect alignments
+        map(.[0][] as $x | .[1][] as $y | select($x.psim < 1) | ({$id} + $x + $y) | del(.psim)) |
+        map(
+            qpos(.qaln) as $pos |
+            . +
+                (
+                  .astr | split("") | map(tonumber) | to_entries |
+                      map(
+                          $atype[(.value - 1)] as $mut |
+                          select($mut != "IDN" and $mut != "SIM") |
+                          { pos: $pos[.key], mut: $mut }
+                      )[]
+                ) |
+                del(.astr, .qaln)
+        )
+'
+
+json %>%
+  parallel::mclapply(
+    function(ele) {
+      read_file(ele) %>%
+        jqr::jq(cmd = cmd) %>%
+        jsonlite::fromJSON()
+    },
+    mc.cores = cores
+  ) %>%
+  bind_rows() %>%
+  mutate(
+    com = factor(com, levels = keys),
+    call = factor(call, levels = calls),
+    mut = factor(mut, levels = muts)
+  ) %>%
+  ggplot(aes(x = pos, y = nseq)) +
+  geom_bar(aes(fill = mut), stat = "identity") +
+  scale_fill_viridis_d() +
+  facet_grid(id ~ com) +
+  xlim(c(0, max_length + 1)) +
+  guides(fill = guide_legend(nrow = 1)) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 6),
+    legend.position = "bottom",
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(fill = NA, linetype = "dotted"),
+    strip.text.y = element_text(hjust = 0, angle = 0, size = 6),
+    text = element_text(family = "mono")
+  )
+```
+
+Primer mutation count...
+
+```{r primer_mutation_count, fig.width=10, fig.height=10}
+cmd <- '
+    .assay.id as $id |
+    .atype as $atype |
+    .hits | [
+        map(.evals | to_entries | map({com: .key, nmut: .value.qaln | split("") | map(select(test("[a-z]"))) | length})),
+        # select TP/FN only
+        map(.calls | to_entries | map(select(.key == "TP" or .key == "FN") | {call: .key, acc: .value[0], nseq: (.value | length)}))
+    ] |
+        transpose |
+        map(.[0][] as $x | .[1][] as $y | ({$id} + $x + $y))
+'
+
+df.data <- (
+  json %>%
+    parallel::mclapply(
+      function(ele) {
+        read_file(ele) %>%
+          jqr::jq(cmd = cmd) %>%
+          jsonlite::fromJSON()
+      },
+      mc.cores = cores
+    ) %>%
+    bind_rows() %>%
+    mutate(
+      com = factor(com, levels = keys),
+      call = factor(call, levels = calls)
+    ) %>%
+    group_by(id, com, nmut) %>%
+    summarise(nseq = sum(nseq), .groups = "drop")
+)
+
+ggplot(df.data, aes(x = nmut, y = nseq)) +
+  geom_bar(stat = "identity") +
+  facet_grid(id ~ com) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 6),
+    legend.position = "bottom",
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(fill = NA, linetype = "dotted"),
+    strip.text.y = element_text(hjust = 0, angle = 0, size = 6),
+    text = element_text(family = "mono")
+  )
+```
+
+Assay mutation count...
+
+```{r assay_mutation_count, fig.width=10, fig.height=10}
+ggplot(df.data, aes(x = nmut, y = nseq, fill = com)) +
+  geom_bar(stat = "identity") +
+  scale_fill_viridis_d() +
+  facet_grid(id ~ .) +
+  theme_minimal() +
+  theme(
+    axis.text.y = element_text(size = 6),
+    legend.position = "bottom",
+    panel.background = element_rect(fill = NA),
+    panel.border = element_rect(fill = NA, linetype = "dotted"),
+    strip.text.y = element_text(hjust = 0, angle = 0, size = 6),
+    text = element_text(family = "mono")
+  )
+```

@@ -5,6 +5,7 @@ import re
 import sys
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, FileType
 from collections import Counter, defaultdict, namedtuple
+from tempfile import NamedTemporaryFile
 
 from Bio import SearchIO
 from sqlalchemy import create_engine
@@ -48,7 +49,7 @@ def main(argv):
     # map taxid to lineage
     engine = create_engine(args.dburl)
     with session_scope(sessionmaker(bind=engine)) as session:
-        lineages = {int(ele): set(ele.tax_id for ele in ancestors(session, ele)) for ele in set(taxa.values())}
+        lineages = {int(val): set(ele.tax_id for ele in ancestors(session, val) if ele) for val in set(taxa.values())}
         nn_taxa = {ancestors(session, ele)[-1].parent_tax_id for ele in assay.targets}
 
     # process glsearch hits
@@ -56,22 +57,25 @@ def main(argv):
     sbj_results = defaultdict(list)
     hsp_results = {}
     # process BLAST+ results
-    for hsp in iter_hsps(SearchIO.parse(args.alignment, "blast-tab", comments=True, fields=fields_8CB)):
-        # calculate query similarity percentage and mutations
-        qry = next(assay.records(hsp.query_id)).seq[hsp.query_start: hsp.query_end]
-        qry = str(qry if hsp.query_strand >= 0 else qry.reverse_complement())
-        qaln = "".join(decode_btop(qry, hsp.btop, sbj=False))
-        saln = "".join(decode_btop(qry, hsp.btop))
-        qcov = (hsp.query_end - hsp.query_start) / len(qry)
-        alignment = [align_type(*ele) for ele in zip(qaln, saln)]
-        astr = "".join(str(ele.value) for ele in alignment)
-        atypes = Counter(ele.name for ele in alignment)
-        psim = sum(not (ele.islower() or ele == "-") for ele in saln) / hsp.aln_span
-        qsim = qcov * psim
-        sbj_id = re.sub(r":[0-9]+$", "", hsp.hit_id)  # acc.ver...:nth-alignment
-        # aggregate HSPs by the subject accession)
-        sbj_results[sbj_id].append(hsp)
-        hsp_results[hsp.hit_id] = result(qaln, saln, astr, atypes, qcov, psim, qsim)
+    with NamedTemporaryFile() as temp, open(args.alignment, "rb") as file:
+        temp.writelines((line for line in file if not line.startswith(b"#")))
+        temp.flush()
+        for hsp in iter_hsps(SearchIO.parse(temp.name, "blast-tab", comments=False, fields=fields_8CB)):
+            # calculate query similarity percentage and mutations
+            qry = next(assay.records(hsp.query_id)).seq[hsp.query_start: hsp.query_end]
+            qry = str(qry if hsp.query_strand >= 0 else qry.reverse_complement())
+            qaln = "".join(decode_btop(qry, hsp.btop, sbj=False))
+            saln = "".join(decode_btop(qry, hsp.btop))
+            qcov = (hsp.query_end - hsp.query_start) / len(qry)
+            alignment = [align_type(*ele) for ele in zip(qaln, saln)]
+            astr = "".join(str(ele.value) for ele in alignment)
+            atypes = Counter(ele.name for ele in alignment)
+            psim = sum(not (ele.islower() or ele == "-") for ele in saln) / hsp.aln_span
+            qsim = qcov * psim
+            sbj_id = re.sub(r":[0-9]+$", "", hsp.hit_id)  # acc.ver...:nth-alignment
+            # aggregate HSPs by the subject accession)
+            sbj_results[sbj_id].append(hsp)
+            hsp_results[hsp.hit_id] = result(qaln, saln, astr, atypes, qcov, psim, qsim)
 
     # process hits
     near = set()

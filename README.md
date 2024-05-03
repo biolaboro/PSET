@@ -15,11 +15,6 @@ mamba env config vars set PYTHONPATH="$(pwd)" -n pset
 mamba activate pset
 ```
 
-Set the **PYTHONPATH** environment variable.
-```bash
-export PYTHONPATH=.
-```
-
 Build the NCBI Taxonomy database.
 ```bash
 snakemake --cores 1 -s workflow/rules/setup.smk taxa

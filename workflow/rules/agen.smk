@@ -7,13 +7,17 @@ root = base.parent
 path_out = Path(config.get("out", Path("resources") / "assay"))
 os.makedirs(path_out, exist_ok=True)
 
-path_conf = root / "conf" / "agen"
+path_conf = Path(config.get("conf", root / "conf" / "agen"))
 
 path_file = config["file"]
 
 modes = config["mode"].split(",")
 confs = {ele.stem: ele for ele in path_conf.glob("*.json")}
 accs = [record.id for record in SeqIO.parse(path_file, "fasta")]
+targets = {}
+if "targets" in config:
+    with open(config["targets"]) as file:
+        targets = dict(ele.split("\t", maxsplit=1) for ele in map(str.strip, file))
 
 
 rule split:
@@ -21,16 +25,20 @@ rule split:
         fna=path_file,
     output:
         fna=path_out / "{acc}" / "seq.fna",
+    params:
+        acc=lambda wildcards, output: wildcards.acc,
     run:
         for record in SeqIO.parse(input.fna, "fasta"):
-            SeqIO.write(record, output.fna, "fasta")
+            if record.id == params.acc:
+                SeqIO.write(record, output.fna, "fasta")
+                break
 
 
 rule agen:
     message:
         "generate assay candidates"
     input:
-        fna=path_out / "{acc}" / "seq.fna",
+        fna=rules.split.output.fna,
     output:
         jsn=path_out / "{acc}" / "{mode}.{conf}.json",
     log:
@@ -67,7 +75,7 @@ rule rank:
         log=path_out / "{acc}" / "{mode}.log",
     params:
         script=root / "scripts" / "agen" / "rank.jq",
-        targets=config.get("targets", "1"),
+        targets=lambda wildcards, output: targets.get(wildcards.acc, "1"),
         n_per_region=int(config.get("n_per_region", 1)),
         n_total=int(config.get("n_total", 10)),
     wildcard_constraints:
@@ -94,7 +102,7 @@ rule tableize:
         tsv=path_out / "{acc}" / "{mode}.tab",
     params:
         script=root / "scripts" / "agen" / "tableize.jq",
-        targets=config.get("targets", "1"),
+        targets=lambda wildcards, output: targets.get(wildcards.acc, "1"),
     shell:
         """
         jq -r -f {params.script:q} --arg targets {params.targets:q} {input.jsn} > {output.tsv:q}
@@ -108,7 +116,7 @@ rule assayfy:
         tsv=path_out / "{acc}" / "{mode}.tsv",
     params:
         script=root / "scripts" / "agen" / "assayfy.jq",
-        targets=config.get("targets", "1"),
+        targets=lambda wildcards, output: targets.get(wildcards.acc, "1"),
     shell:
         """
         jq -r -f {params.script:q} --arg targets {params.targets:q} {input.jsn} > {output.tsv:q}

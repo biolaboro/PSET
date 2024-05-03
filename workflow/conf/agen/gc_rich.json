@@ -11,11 +11,7 @@
         "PRIMER_MAX_TM": 63,
         "PRIMER_MIN_SIZE": 15,
         "PRIMER_MIN_TM": 59,
-        "PRIMER_OPT_TM": 61,
-        "PRIMER_PRODUCT_SIZE_RANGE": [
-            120,
-            160
-        ]
+        "PRIMER_OPT_TM": 61
     },
     "F3B3": {
         "PRIMER_MAX_SIZE": 20,
@@ -34,6 +30,7 @@
         "PRIMER_MAX_GC": 70,
         "PRIMER_MAX_NS_ACCEPTED": 0,
         "PRIMER_MIN_GC": 40,
+        "PRIMER_MIN_THREE_PRIME_DISTANCE": 1,
         "PRIMER_NUM_RETURN": 50,
         "PRIMER_SALT_DIVALENT": 8,
         "PRIMER_SALT_MONOVALENT": 50,

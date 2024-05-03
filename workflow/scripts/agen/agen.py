@@ -15,8 +15,10 @@ from Bio.SeqRecord import SeqRecord
 
 from pset.assay import LAMP, PCR, Assay, amb
 
+DEFAULT_PRIMER_MAX_SIZE = 27
 
-def to_seq_args(records, l=None, r=None):
+
+def rec_to_seq_args(records, l=None, r=None):
     # left/right -> (start-distance, size)
     for record in records:
         seq_args = dict(SEQUENCE_TEMPLATE=str(record.seq))
@@ -104,49 +106,95 @@ def main_pcr(args, conf, records):
 def main_lamp(args, conf, records):
     stats = defaultdict(int)
 
+    # if val := sconf.get("SEQUENCE_PRIMER"):
+    #     records0 = (record for record in records if val in record)
+    # if val := sconf.get("SEQUENCE_PRIMER_REVCOMP"):
+    #     records0 = (record for record in records if val in record.reverse_complement())
+
+    json.dump(conf, fp=sys.stderr, indent=True)
+    print(file=sys.stderr)
+    print(file=sys.stderr)
+
     # Primer3
     with Pool(args.proc) as pool:
         # Calculate F3/B3
-        conf["F3B3"]["PRIMER_PICK_LEFT_PRIMER"] = 1
-        conf["F3B3"]["PRIMER_PICK_RIGHT_PRIMER"] = 1
-        iterable = ((ele, conf["F3B3"]) for ele in to_seq_args(records))
+        key = "F3B3"
+        sconf, pconf = split_conf(conf[key])
+        pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
+        pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
+        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(file=sys.stderr)
+
+        iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records))
         results1 = pool.starmap(primer3.bindings.design_primers, iterable)
         records1 = [subamplicon(coor, results1, records) for coor in iter_coors(results1)]
-        print("F3/B3", len(records1), file=sys.stderr)
+        print(key, len(records1), file=sys.stderr)
         # Calculate F2/B2
-        conf["F2B2"]["PRIMER_PICK_LEFT_PRIMER"] = 1
-        conf["F2B2"]["PRIMER_PICK_RIGHT_PRIMER"] = 1
+        key = "F2B2"
+        sconf, pconf = split_conf(conf[key])
+        pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
+        pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
+        pconf["PRIMER_PRODUCT_SIZE_RANGE"] = pconf.get(
+            "PRIMER_PRODUCT_SIZE_RANGE",
+            [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records1), default=0)]
+        )
+        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(file=sys.stderr)
         dist_range = conf["LAMP"]["F3F2_DIST_RANGE"]
-        iterable = ((ele, conf["F2B2"]) for ele in to_seq_args(records1, l=dist_range, r=dist_range))
+        iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records1, l=dist_range, r=dist_range))
         results2 = pool.starmap(primer3.bindings.design_primers, iterable)
         records2 = [subamplicon(coor, results2, records1) for coor in iter_coors(results2)]
-        print("F2/B2", len(records2), file=sys.stderr)
+        print(key, len(records2), file=sys.stderr)
         # Calculate LF
-        conf["LFLB"]["PRIMER_PICK_LEFT_PRIMER"] = 0
-        conf["LFLB"]["PRIMER_PICK_RIGHT_PRIMER"] = 1
-        iterable = ((ele, conf["LFLB"]) for ele in to_seq_args(records2))
+        key = "LFLB"
+        sconf, pconf = split_conf(conf[key])
+        pconf["PRIMER_PICK_LEFT_PRIMER"] = 0
+        pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
+        pconf["PRIMER_PRODUCT_SIZE_RANGE"] = pconf.get(
+            "PRIMER_PRODUCT_SIZE_RANGE",
+            [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records2), default=0)]
+        )
+        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(file=sys.stderr)
+        iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2))
         results3LF = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print("LF", sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3LF), file=sys.stderr)
+        print(key[:2], sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3LF), file=sys.stderr)
         # Calculate F1c
-        conf["F1cB1c"]["PRIMER_PICK_LEFT_PRIMER"] = 0
-        conf["F1cB1c"]["PRIMER_PICK_RIGHT_PRIMER"] = 1
-        dist_range = conf["LAMP"]["F2F1c_DIST_RANGE"]
-        iterable = ((ele, conf["F1cB1c"]) for ele in to_seq_args(records2, l=dist_range))
+        key = "F1cB1c"
+        sconf, pconf = split_conf(conf[key])
+        pconf["PRIMER_PICK_LEFT_PRIMER"] = 0
+        pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
+        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(file=sys.stderr)
+        dist_range = conf["LAMP"][f"F2F1c_DIST_RANGE"]
+        iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2, l=dist_range))
         results3F1c = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print("F1c", sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3F1c), file=sys.stderr)
+        print(key[:3], sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3F1c), file=sys.stderr)
         # Calculate LB
-        conf["LFLB"]["PRIMER_PICK_LEFT_PRIMER"] = 1
-        conf["LFLB"]["PRIMER_PICK_RIGHT_PRIMER"] = 0
-        iterable = ((ele, conf["LFLB"]) for ele in to_seq_args(records2))
+        key = "LFLB"
+        sconf, pconf = split_conf(conf[key])
+        pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
+        pconf["PRIMER_PICK_RIGHT_PRIMER"] = 0
+        pconf["PRIMER_PRODUCT_SIZE_RANGE"] = pconf.get(
+            "PRIMER_PRODUCT_SIZE_RANGE",
+            [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records2), default=0)]
+        )
+        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(file=sys.stderr)
+        iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2))
         results3LB = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print("LB", sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3LB), file=sys.stderr)
+        print(key[2:], sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3LB), file=sys.stderr)
         # Calculate B1c
-        conf["F1cB1c"]["PRIMER_PICK_LEFT_PRIMER"] = 1
-        conf["F1cB1c"]["PRIMER_PICK_RIGHT_PRIMER"] = 0
+        key = "F1cB1c"
+        sconf, pconf = split_conf(conf[key])
+        pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
+        pconf["PRIMER_PICK_RIGHT_PRIMER"] = 0
+        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(file=sys.stderr)
         dist_range = conf["LAMP"]["F2F1c_DIST_RANGE"]
-        iterable = ((ele, conf["F1cB1c"]) for ele in to_seq_args(records2, r=dist_range))
+        iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2, r=dist_range))
         results3B1c = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print("B1c", sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3B1c), file=sys.stderr)
+        print(key[3:], sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3B1c), file=sys.stderr)
 
     # process combos
     sublamps = []
@@ -301,6 +349,13 @@ def main_lamp(args, conf, records):
         yield (assay, penalty)
 
 
+def split_conf(conf):
+    return (
+        {key: val for key, val in conf.items() if key.startswith(prefix)}
+        for prefix in ("SEQUENCE_", "PRIMER_")
+    )
+
+
 def parse_config(path, cstr):
     cobj = defaultdict(dict)
     for ele in cstr:
@@ -329,7 +384,7 @@ def parse_args(argv):
     parser.add_argument("--optional-loop", action="store_true", help="the flag to make LF/LB component generation optional")
     parser.add_argument(
         "-cstr",
-        help="the configuration override string(s), format='section:key=val,...', example: 'GLOBAL:PRIMER_NUM_RETURN=500'",
+        help="the configuration override string(s), format='section:key=val', example: 'GLOBAL:PRIMER_NUM_RETURN=500'",
         nargs="+",
         default=[],
     )

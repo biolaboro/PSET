@@ -23,12 +23,6 @@ environment.
    mamba env config vars set PYTHONPATH="$(pwd)" -n pset
    mamba activate pset
 
-Set the **PYTHONPATH** environment variable.
-
-.. code:: bash
-
-   export PYTHONPATH=.
-
 Build the NCBI Taxonomy database.
 
 .. code:: bash

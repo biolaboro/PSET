@@ -5,12 +5,12 @@ from pathlib import Path
 from subprocess import PIPE, Popen, check_output
 
 import pandas as pd
+from Bio import SeqIO
 from shiny import App
 from shiny import experimental as ex
 from shiny import reactive, render, ui
 
 from pset.assay import parse_assays
-from pset.plot import plot_data
 
 BLAST_DIR = Path("resources") / "blast"
 DBURL = "sqlite:///resources/taxa/taxa.db"
@@ -120,11 +120,7 @@ app_ui = ui.page_fluid(
                             "output",
                             ui.navset_tab(
                                 ui.nav("confusion", ui.output_table("result_table")),
-                                ui.nav("cover", ui.output_plot("result_cover")),
-                                ui.nav("heat", ui.output_plot("result_heat", height="1000px")),
-                                ui.nav("muts", ui.output_plot("result_muts", height="1000px")),
-                                ui.nav("nmut/acc", ui.output_plot("result_nmut_acc", height="1000px")),
-                                ui.nav("nmut/acc/com", ui.output_plot("result_nmut_com", height="1000px")),
+                                ui.nav("report", ui.output_ui("result_report")),
                             ),
                         ),
                     )
@@ -245,20 +241,21 @@ def server(input, output, session):
                 fp=file,
                 indent=True,
             )
-        cmd = (
-            "snakemake",
-            "--cores",
-            str(input.max_threads()),
-            "--set-threads",
-            f"local={input.lcl_threads()}",
-            f"glocal={input.glc_threads()}",
-            "--configfile",
-            str(path_config),
-            "--",
-            "target_tsv",
-        )
-        cmd = list(filter(len, cmd))
-        monitor_snakemake(session, cmd)
+        for ele in ("tsv", "report"):
+            cmd = (
+                "snakemake",
+                "--cores",
+                str(input.max_threads()),
+                "--set-threads",
+                f"local={input.lcl_threads()}",
+                f"glocal={input.glc_threads()}",
+                "--configfile",
+                str(path_config),
+                "--",
+                f"target_{ele}",
+            )
+            cmd = list(filter(len, cmd))
+            monitor_snakemake(session, cmd)
         path_root = path_out.joinpath(Path(input.database()).stem)
         if path_root.joinpath("con.tsv").exists():
             root.set(path_root)
@@ -269,50 +266,11 @@ def server(input, output, session):
         return pd.read_table(root().joinpath("con.tsv"), delimiter="\t")
 
     @output(suspend_when_hidden=False)
-    @render.plot
-    def result_heat():
+    @render.ui
+    def result_report():
         with ui.Progress() as prog:
-            prog.set(value=0.25, message="plotting heat...")
-            cmd = [*("-mode", "heat"), *(filter(Path.is_dir, root().iterdir()))]
-            plot = plot_data(filter(Path.is_dir, root().iterdir()), "heat")
-            prog.set(value=1.0, message="complete!")
-        return plot
-
-    @output(suspend_when_hidden=False)
-    @render.plot
-    def result_cover():
-        with ui.Progress() as prog:
-            prog.set(value=0.25, message="plotting heat...")
-            plot = plot_data(filter(Path.is_dir, root().iterdir()), "cover")
-            prog.set(value=1.0, message="complete!")
-        return plot
-
-    @output(suspend_when_hidden=False)
-    @render.plot
-    def result_muts():
-        with ui.Progress() as prog:
-            prog.set(value=0.25, message="plotting muts...")
-            plot = plot_data(filter(Path.is_dir, root().iterdir()), "muts")
-            prog.set(value=1.0, message="complete!")
-        return plot
-
-    @output(suspend_when_hidden=False)
-    @render.plot
-    def result_nmut_acc():
-        with ui.Progress() as prog:
-            prog.set(value=0.25, message="plotting nmut/acc...")
-            plot = plot_data(filter(Path.is_dir, root().iterdir()), "nmut_acc")
-            prog.set(value=1.0, message="complete!")
-        return plot
-
-    @output(suspend_when_hidden=False)
-    @render.plot
-    def result_nmut_com():
-        with ui.Progress() as prog:
-            prog.set(value=0.25, message="plotting nmut/acc/com...")
-            plot = plot_data(filter(Path.is_dir, root().iterdir()), "nmut_com")
-            prog.set(value=1.0, message="complete!")
-        return plot
+            with root().joinpath("report.html").open() as file:
+                return ui.HTML(file.read())
 
     @output(suspend_when_hidden=False)
     @render.table
@@ -374,8 +332,6 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.agen_run)
     def run_agen_workflow():
-        from Bio import SeqIO
-
         info = input.agen_fasta()
         if not info:
             return

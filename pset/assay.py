@@ -14,7 +14,7 @@ from operator import mul
 
 from Bio.Data.IUPACData import ambiguous_dna_letters as dna_key
 from Bio.Data.IUPACData import ambiguous_dna_values as dna_val
-from Bio.Seq import Seq
+from Bio.Seq import Seq, reverse_complement
 from Bio.SeqRecord import SeqRecord
 
 from pset.util import iter_limit, iter_lines, sniff_lines
@@ -170,7 +170,7 @@ class Assay(object):
             coor = self.acoors() if key == "amplicon" else self.ccoors[key]
             idx5 = coor[0] - context[0]
             idx5 = 0 if idx5 < 0 else idx5
-            val = self.camplicon()[idx5 : coor[1] + context[1]]
+            val = self.camplicon()[idx5: coor[1] + context[1]]
             if expand > 0:
                 nexp = num_expansions(val)
                 width = len(str(nexp))
@@ -225,7 +225,7 @@ class Assay(object):
         """
         for p1, p2 in product(primers1, primers2):
             p1, p2 = (p1, p2) if p1.hit_end < p2.hit_start else (p2, p1)
-            if p1.query_strand == p2.query_strand and dist[0] <= p2.hit_end - p1.hit_start <= dist[1]:
+            if p1.query_strand == p2.query_strand and dist[0] <= p2.hit_end - p1.hit_start + 1 <= dist[1]:
                 yield p1, p2
 
     @staticmethod
@@ -325,9 +325,9 @@ class LAMP(Assay):
             k1, k2 = keys[i1], keys[i2]
             subdefinition = (
                 ""
-                + definition[coor[k1][0] - 1 : coor[k1][1] + 1]
-                + "".join(ele for ele in definition[coor[k1][1] + 1 : coor[k2][0] - 1] if ele not in excl[i])
-                + definition[coor[k2][0] - 1 : coor[k2][1] + 1]
+                + definition[coor[k1][0] - 1: coor[k1][1] + 1]
+                + "".join(ele for ele in definition[coor[k1][1] + 1: coor[k2][0] - 1] if ele not in excl[i])
+                + definition[coor[k2][0] - 1: coor[k2][1] + 1]
             )
             self.subassays.append(Assay.factory(subdefinition, targets, f"{self.id}-{k1}/{k2}"))
 
@@ -401,15 +401,15 @@ class LAMP(Assay):
                 B, C = (B, C) if B[-1].hit_end < C[0].hit_start else (C, B)
                 if (
                     # check arrangement
-                    A.hit_end < B[0].hit_start
-                    and B[-1].hit_end < C[0].hit_start
-                    and C[-1].hit_end < D.hit_start
+                    A.hit_end <= B[0].hit_start
+                    and B[-1].hit_end <= C[0].hit_start
+                    and C[-1].hit_end <= D.hit_start
                     # check distances
-                    and dF3F2[0] <= B[0].hit_start - A.hit_end <= dF3F2[1]
-                    and dF3F2[0] <= D.hit_start - C[-1].hit_end <= dF3F2[1]
-                    and dF2F1c[0] <= B[-1].hit_start - B[0].hit_end <= dF2F1c[1]
-                    and dF2F1c[0] <= C[-1].hit_start - C[0].hit_end <= dF2F1c[1]
-                    and dF1cB1c[0] <= C[0].hit_start - B[-1].hit_end <= dF1cB1c[1]
+                    and dF3F2[0] <= B[0].hit_start - A.hit_end + 1 <= dF3F2[1]
+                    and dF3F2[0] <= D.hit_start - C[-1].hit_end + 1 <= dF3F2[1]
+                    and dF2F1c[0] <= B[-1].hit_start - B[0].hit_end + 1 <= dF2F1c[1]
+                    and dF2F1c[0] <= C[-1].hit_start - C[0].hit_end + 1 <= dF2F1c[1]
+                    and dF1cB1c[0] <= C[0].hit_start - B[-1].hit_end + 1 <= dF1cB1c[1]
                 ):
                     hit = (*A, *B, *C, *D)
                     # translate back from subassay component key to assay component key
@@ -484,7 +484,7 @@ def decode_btop(seq, btop, sbj=True):
     for ele in filter(len, re.split("([^0-9]{2})", btop)):
         if ele.isdigit():  # identity of length n
             n = int(ele)
-            yield seq[i : i + n]
+            yield seq[i: i + n]
             i += n
         elif ele[0] == "-":  # gap
             yield ele[sbj].lower()
@@ -559,7 +559,7 @@ def parse_assays(file, context=(0, 0), comment="#", sniff=True, target_type=str,
         tokens = re.split(r"[\[\]]", definition)
         idx5 = len(tokens[0]) - context[0]
         idx5 = 0 if idx5 < 0 else idx5
-        definition = tokens[0][idx5:] + definition[len(tokens[0]) : len(definition) - len(tokens[-1])] + tokens[-1][: context[1]]
+        definition = tokens[0][idx5:] + definition[len(tokens[0]): len(definition) - len(tokens[-1])] + tokens[-1][: context[1]]
         targets = set(map(target_type, row["targets"].split(";"))) if "targets" in row else ()
         id = row.get("id")
         yield Assay.factory(definition, targets, id)
@@ -584,7 +584,7 @@ def parse_args(argv):
 
     parser = ArgumentParser(description="assay util...", formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("file", help="the assay file", type=FileType())
-    choices = ("records", "coordinates")
+    choices = ("records", "coordinates", "order")
     parser.add_argument("-command", choices=choices, default=choices[0])
     parser.add_argument("-ids", help="the assay identifiers to process, default includes all", nargs="+", default=[])
     parser.add_argument("-keys", help="the assay component keys, defaults to all", nargs="+", default=())
@@ -611,6 +611,16 @@ def main(argv):
             keys = (key for key in args.keys if key in assay.components) if args.keys else assay.components
             for key in keys:
                 print(key, *assay.ccoors[key], sep="\t")
+    elif args.command == "order":
+        for assay in assays:
+            print(f">{assay.id}_F3", assay.components["F3"], sep="\n")
+            print(f">{assay.id}_B3", reverse_complement(assay.components["B3"]), sep="\n")
+            print(f">{assay.id}_FIP", assay.fip(), sep="\n")
+            print(f">{assay.id}_BIP", assay.bip(), sep="\n")
+            if "LF" in assay.components:
+                print(f">{assay.id}_LF", reverse_complement(assay.components["LF"]), sep="\n")
+            if "LB" in assay.components:
+                print(f">{assay.id}_LB", assay.components["LB"], sep="\n")
 
 
 if __name__ == "__main__":

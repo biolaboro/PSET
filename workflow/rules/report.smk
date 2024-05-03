@@ -51,42 +51,21 @@ rule tab_confusion:
         """
 
 
-rule plot_mismatches:
+rule plot_report:
     message:
-        "plot assay component mismatches: {wildcards.id}"
+        "generate plot report"
     input:
-        rules.call.output.jsn,
+        json=[Path(ele).absolute() for ele in expand(rules.call.output.jsn, id=assays)],
     output:
-        png=report(subroot / "mis.png", caption=base.parent / "report" / "mismatch.rst", category="Assay", subcategory="{id}"),
+        html=root.absolute() / "report.html",
     log:
-        log=subroot / "mis.log",
+        log=root / "report.log",
     params:
-        script=base / "scripts" / "report" / "plot_mismatches.py",
-        dpi=config["dpi"],
-    threads: 1
+        script=base.absolute() / "scripts" / "report" / "plot.Rmd",
+    threads: 8
     shell:
         """
-        {params.script:q} {input:q} -out {output.png:q} -dpi {params.dpi} 2> {log.log:q}
-        """
-
-
-rule plot_heat:
-    message:
-        "plot heatmap"
-    input:
-        expand(rules.call.output.jsn, id=assays),
-    output:
-        png=report(root / "heat.png", caption=base.parent / "report" / "heat.rst", category="Summary"),
-    log:
-        log=root / "heat.log",
-    params:
-        parents=lambda wildcards, input: [Path(ele).parent for ele in input],
-        script=base / "scripts" / "report" / "plot_heat.py",
-        dpi=config["dpi"],
-    threads: 1
-    shell:
-        """
-        {params.script:q} {params.parents:q} -out {output.png:q} -dpi {params.dpi} 2> {log.log:q}
+        Rscript -e "args = commandArgs(trailingOnly = T); rmarkdown::render(args[1], output_file=args[2], params=list(json=args[3:length(args)]));" {params.script:q} {output:q} {input}
         """
 
 
@@ -103,33 +82,6 @@ rule tab_config:
         """
 
 
-rule report_offline:
-    input:
-        tsv=rules.tab_confusion.output.tsv,
-        png=Path(rules.plot_heat.output.png).resolve(),
-    output:
-        html=root / "report_offline.html",
-    threads: 1
-    params:
-        md=base.parent / "README.md",
-        cmd='{printf("|"); for (i = 1; i <= NF; ++i) printf("%s|", $i); printf("\\n")}',
-        css="<style>table, th, td { border: 1px solid; } </style>",
-    shell:
-        """
-        {{
-            cat {params.md:q};
-            printf "\n## Confusion Matrix\n";
-            NF="$(awk -F $'\t' 'NR == 1 {{ printf(NF); }}' {input.tsv:q})";
-            awk -F $'\t' 'NR == 1 {params.cmd}' {input.tsv:q};
-            printf "|"; seq 1 "$NF" | while read -r _; do printf -- "-|"; done; printf "\\n";
-            awk -F $'\t' 'NR >= 2 {params.cmd}' {input.tsv:q};
-            printf "\n## Heatmap\n";
-            printf "\n![Heatmap](%s)\n" {input.png:q};
-            printf "\n%s\n" {params.css:q}
-        }} | pandoc --metadata title=PSET --embed-resources --standalone - -o {output.html:q}
-        """
-
-
 rule target_tsv:
     input:
         expand(rules.tab_hits.output.tsv, id=assays),
@@ -143,11 +95,5 @@ rule target_report:
         expand(rules.tab_hits.output.tsv, id=assays),
         expand(rules.tab_alignments.output.tsv, id=assays),
         rules.tab_confusion.output.tsv,
-        expand(rules.plot_mismatches.output.png, id=assays),
-        rules.plot_heat.output.png,
         rules.tab_config.output.tsv,
-
-
-rule target_report_offline:
-    input:
-        md=rules.report_offline.output.html,
+        rules.plot_report.output.html,

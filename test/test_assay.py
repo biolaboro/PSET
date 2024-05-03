@@ -3,6 +3,7 @@
 import os
 import unittest
 from collections import defaultdict
+from itertools import chain
 from operator import attrgetter
 from pathlib import Path
 from subprocess import PIPE, Popen, check_call
@@ -38,7 +39,7 @@ def perfect_hits(assay, subject):
                             if hsp.ident_pct == 100:
                                 hsps[hsp.hit_id].append(hsp)
 
-    return next(assay.hits(next(iter(hsps.values()), []), dFR=(1, 1000), dF3F2=(20, 80), dF2F1c=(20, 80), dF1cB1c=(1, 100)), None)
+    return next(assay.hits(list(chain.from_iterable(hsps.values())), dFR=(1, 1000), dF3F2=(1, 100), dF2F1c=(1, 100), dF1cB1c=(1, 100)), None)
 
 
 class Test(unittest.TestCase):
@@ -239,15 +240,30 @@ class Test(unittest.TestCase):
         subject = "\n".join((ele.strip() for ele in subject[1:].split("\n")))
         self.assertIsNotNone(perfect_hits(assay, subject))
 
+        assay = Assay.factory(
+            "[TTCAAGTGGAGCACTTGGGCTA][ATGTTGAGGCGAAGTTTAGGT](TTACCGCCGCAATACGAGC)[GGCATTTGGGCTTGTCGGATCA]T[CAAAACGGGCGACGT](AACACCTCCTGCATAACTCTTGC)[TGCTCGAGTCTGTCGACGA][GTACGCCACTGGTAGCAGAAGA]",
+            {666},
+            "Chakraborty-ctxA-modified",
+        )
+        self.assertIsNotNone(perfect_hits(assay, f">sbj\n{''.join(filter(str.isalpha, assay.definition))}\n"))
+
     def test_pcr_hits(self):
         #                    5'<-> 3'
         # CCCCGCCGCGGGCCGGCGCG <-> CGCGCCGGCCCGCGGCGGGG
         # TTTGGGTGTGGTGTGGTGGT <-> ACCACCACACCACACCCAAA
+        assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG][TTTGGGTGTGGTGTGGTGGT]")
+        self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGTTTGGGTGTGGTGTGGTGGT\n"))
         assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG]AAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAA[TTTGGGTGTGGTGTGGTGGT]")
         self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGAAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAATTTGGGTGTGGTGTGGTGGT\n"))
         self.assertIsNotNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAATTTTTTTTTTAATATAATATATAAATATAATTTTTTTTTTCGCGCCGGCCCGCGGCGGGG\n"))
         self.assertIsNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAAAAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAACCCCGCCGCGGGCCGGCGCG\n"))
         self.assertIsNone(perfect_hits(assay, ">sub\nCGCGCCGGCCCGCGGCGGGGTTTTTTTTTTAATATAATATATAAATATAATTTTTTTTTTTTTGGGTGTGGTGTGGTGGT\n"))
+        assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG](TTATATTTATATATTATATT)AAAAAAAAAA[TTTGGGTGTGGTGTGGTGGT]")
+        self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGTTATATTTATATATTATATTAAAAAAAAAATTTGGGTGTGGTGTGGTGGT\n"))
+        assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG]AAAAAAAAAA(TTATATTTATATATTATATT)[TTTGGGTGTGGTGTGGTGGT]")
+        self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGTTATATTTATATATTATATTAAAAAAAAAATTTGGGTGTGGTGTGGTGGT\n"))
+        assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG](TTATATTTATATATTATATT)[TTTGGGTGTGGTGTGGTGGT]")
+        self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGTTATATTTATATATTATATTTTTGGGTGTGGTGTGGTGGT\n"))
         assay = Assay.factory("[CCCCGCCGCGGGCCGGCGCG]AAAAAAAAAA(TTATATTTATATATTATATT)AAAAAAAAAA[TTTGGGTGTGGTGTGGTGGT]")
         self.assertIsNotNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGAAAAAAAAAATTATATTTATATATTATATTAAAAAAAAAATTTGGGTGTGGTGTGGTGGT\n"))
         self.assertIsNotNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAATTTTTTTTTTAATATAATATATAAATATAATTTTTTTTTTCGCGCCGGCCCGCGGCGGGG\n"))
@@ -257,6 +273,7 @@ class Test(unittest.TestCase):
         self.assertIsNotNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAATTTTTTTTTTTTATATTTATATATTATATTTTTTTTTTTTCGCGCCGGCCCGCGGCGGGG\n"))
         self.assertIsNone(perfect_hits(assay, ">sub\nACCACCACACCACACCCAAAAAAAAAAAAAAATATAATATATAAATATAAAAAAAAAAAACCCCGCCGCGGGCCGGCGCG\n"))
         self.assertIsNone(perfect_hits(assay, ">sub\nCCCCGCCGCGGGCCGGCGCGTTTTTTTTTTTTATATTTATATATTATATTTTTTTTTTTTACCACCACACCACACCCAAA\n"))
+
         # from brad
         assay = Assay.factory(
             "CAGCTG[TGCGTCGGCAAACCAATGCT]ATTGAATCACTAGAAGGTCGAGTAACAACTCTTGA(GGCCAGCTTAAAACCCGTTC)AAGACATGGCAAAGACCATATCATCCCTGAATCGCAGCTGT[GCCGAAATGGTTGCAAAATACG]ACCTAC"
@@ -306,7 +323,7 @@ class Test(unittest.TestCase):
             for rec in SearchIO.parse(file, "blast-tab", fields=fields, comments=True):
                 for hit in rec.hits:
                     for hsp in hit.hsps:
-                        qry = str(queries[hsp.query_id].seq)[hsp.query_start : hsp.query_end]
+                        qry = str(queries[hsp.query_id].seq)[hsp.query_start: hsp.query_end]
                         qaln = str(hsp.query.seq)
                         saln = str(hsp.hit.seq)
                         print(qaln)
@@ -330,7 +347,7 @@ class Test(unittest.TestCase):
                     for hit1, hit2 in zip(rec1.hits, rec2.hits):
                         for hsp1, hsp2 in zip(hit1.hsps, hit2.hsps):
                             self.assertEqual(hsp_getter(hsp1), hsp_getter(hsp2))
-                            qry = queries[hsp1.query_id].seq[hsp1.query_start : hsp1.query_end]
+                            qry = queries[hsp1.query_id].seq[hsp1.query_start: hsp1.query_end]
                             qry = str(qry if hsp1.query_strand >= 0 else qry.reverse_complement())
                             qaln = str(hsp2.query.seq)
                             saln = str(hsp2.hit.seq)
