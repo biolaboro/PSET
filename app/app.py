@@ -2,7 +2,7 @@ import json
 import os
 import sqlite3
 from pathlib import Path
-from subprocess import PIPE, Popen, check_output
+from subprocess import PIPE, Popen, check_call, check_output
 
 import pandas as pd
 from Bio import SeqIO
@@ -13,7 +13,8 @@ from shiny import reactive, render, ui
 from pset.assay import parse_assays
 
 BLAST_DIR = Path("resources") / "blast"
-DBURL = "sqlite:///resources/taxa/taxa.db"
+PATH_TAXA = "resources/taxa/taxa.db"
+DBURL = f"sqlite:///{PATH_TAXA}"
 RESULTS = Path("results")
 CPU_COUNT = os.cpu_count()
 
@@ -128,6 +129,25 @@ app_ui = ui.page_fluid(
             ),
         ),
         ui.nav(
+            "CUSTOM DB",
+            ui.layout_sidebar(
+                ui.panel_sidebar(
+                    "Input FASTA file and accession-taxon mapping. "
+                    "The mapping file must not contain column names. "
+                    "The first column of the mapping file is the accession and the second is the taxon identifier. ",
+                    "If the mapping file is an Excel file, then the first sheet is assumed.",
+                    ui.hr(),
+                    ui.input_file("info_fasta", "DNA sequences (FASTA)"),
+                    ui.input_file("info_taxon", "accession-taxon mapping"),
+                    ui.input_text("db_title", "title"),
+                    ui.input_action_button("run_build", "build"),
+                ),
+                ui.panel_main(
+                    ui.output_table("result_mapping"),
+                ),
+            ),
+        ),
+        ui.nav(
             "DOWNLOAD",
             ui.layout_sidebar(
                 ui.panel_sidebar(
@@ -183,12 +203,18 @@ app_ui = ui.page_fluid(
 def server(input, output, session):
     root = reactive.Value()
     agen_expected_output = reactive.Value()
+    df_local_db = reactive.Value()
     df_remote_db = reactive.Value()
+    df_taxa = reactive.Value()
+    df_sequences = reactive.Value()
+    df_mapping = reactive.Value()
 
     @reactive.Effect
     def _():
         # populate local databases
         ui.update_select("database", choices=nucl_db_v5_choices(), session=session)
+        data = blastdbcmd_info()
+        df_local_db.set(data[(data["type"] == "Nucleotide") & (data["version"] == 5)].iloc[:, 2:-1])
 
     @output(suspend_when_hidden=False)
     @render.table
@@ -205,8 +231,7 @@ def server(input, output, session):
     @output(suspend_when_hidden=False)
     @render.table
     def database_table():
-        data = blastdbcmd_info()
-        return data[(data["type"] == "Nucleotide") & (data["version"] == 5)].iloc[:, 2:-1]
+        return df_local_db()
 
     @reactive.Effect
     @reactive.event(input.run_pset)
@@ -272,12 +297,102 @@ def server(input, output, session):
             with root().joinpath("report.html").open() as file:
                 return ui.HTML(file.read())
 
+    @reactive.Effect
+    @reactive.event(input.info_fasta)
+    def load_fasta():
+        info = input.info_fasta()
+        if not info:
+            return
+        df_sequences.set(pd.DataFrame(dict(accession=[ele.id for ele in SeqIO.parse(info[0]["datapath"], "fasta")])))
+
+    @reactive.Effect
+    @reactive.event(input.info_taxon)
+    def load_mapping():
+        info = input.info_taxon()
+        if not info:
+            return
+        path = Path(info[0]["datapath"])
+        df = (
+            pd.read_excel(path, names=["accession", "taxon"], dtype=str)
+            if path.suffix == ".xlsx" else
+            pd.read_table(path, names=["accession", "taxon"], dtype=str, sep="\s+")
+        )
+        pd.set_option("display.max_rows", None)
+        conn = sqlite3.connect(PATH_TAXA)
+        curs = conn.cursor()
+        curs.row_factory = dict_factory
+        df_right = pd.DataFrame([next(ancestors(curs, ele)) for ele in df["taxon"].unique()])
+        df_right.rename(columns=dict(tax_id="taxon", parent_tax_id="parent_taxon"), inplace=True)
+        df_right["parent_taxon"] = df_right["parent_taxon"].astype(str)
+        df_right["taxon"] = df_right["taxon"].astype(str)
+        df = df.merge(df_right, on="taxon", how="left")
+        curs.close()
+        conn.close()
+        df_taxa.set(df)
+
+    @reactive.Effect
+    @output
+    @render.table
+    def result_mapping():
+        df = df_sequences().merge(df_taxa(), on="accession", how="left")
+        df_mapping.set(df)
+        return df
+
+    @reactive.Effect
+    @reactive.event(input.run_build)
+    def run_build():
+        title = input.db_title()
+        path_dir = BLAST_DIR.joinpath(title)
+        out = str(path_dir.joinpath(title))
+        df = df_mapping()
+        if df["taxon"].isnull().any():
+            modal = ui.modal(
+                "Accession(s) missing taxon identifiers!",
+                title="Error",
+                easy_close=True,
+                footer=None,
+            )
+        else:
+            os.makedirs(path_dir, exist_ok=True)
+            path_map = path_dir.joinpath(title).with_suffix(".ssv")
+            with path_map.open("w") as file:
+                df.to_csv(file, sep=" ", columns=["accession", "taxon"], header=False, index=False)
+            cmd = (
+                "makeblastdb",
+                "-in", input.info_fasta()[0]["datapath"],
+                "-input_type", "fasta",
+                "-dbtype", "nucl",
+                "-title", title,
+                "-parse_seqids",
+                "-hash_index",
+                "-out", str(path_dir.joinpath(title)),
+                "-blastdb_version", "5",
+                "-logfile", str(path_dir.joinpath(title).with_suffix(".log")),
+                "-taxid_map", str(path_map)
+            )
+            with ui.Progress(session=session) as prog:
+                prog.set(message=f"building {title} BLAST+ database...")
+                check_call(cmd)
+                print(" ".join(cmd))
+                prog.set(message="getting info...")
+
+            modal = ui.modal(
+                f"Database '{title}' built!",
+                title="Complete",
+                easy_close=True,
+                footer=None,
+            )
+            ui.update_select("database", choices=nucl_db_v5_choices(), session=session)
+            data = blastdbcmd_info()
+            df_local_db.set(data[(data["type"] == "Nucleotide") & (data["version"] == 5)].iloc[:, 2:-1])
+        ui.modal_show(modal)
+
     @output(suspend_when_hidden=False)
     @render.table
     @reactive.event(input.run_taxa)
     def taxa_table():
         tax_id = input.tax_id()
-        conn = sqlite3.connect("resources/taxa/taxa.db")
+        conn = sqlite3.connect(PATH_TAXA)
         curs = conn.cursor()
         curs.row_factory = dict_factory
         result = pd.DataFrame(ancestors(curs, tax_id))

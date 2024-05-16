@@ -48,6 +48,7 @@ rule agen:
         conf=lambda wildcards, output: confs[wildcards.conf],
         cstr=config.get("cstr", "GLOBAL:PRIMER_NUM_RETURN=1000"),
         limit=int(config.get("n_per_region", 1)),
+        global_override=config.get("global_override", ""),
         optional_loop=config.get("optional_loop", ""),
     threads: 8
     shell:
@@ -56,6 +57,7 @@ rule agen:
         {params.script:q} \
             -mode {wildcards.mode:q} \
             -conf {params.conf:q} \
+            ${{global_override:+--global-override}} \
             ${{optional_loop:+--optional-loop}} \
             -cstr {params.cstr} \
             -limit {params.limit:q} \

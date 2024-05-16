@@ -65,7 +65,12 @@ rule plot_report:
     threads: 8
     shell:
         """
-        Rscript -e "args = commandArgs(trailingOnly = T); rmarkdown::render(args[1], output_file=args[2], params=list(json=args[3:length(args)]));" {params.script:q} {output:q} {input}
+        Rscript \
+            -e "args = commandArgs(trailingOnly = T); rmarkdown::render(args[1], output_file=args[2], params=list(json=args[3:length(args)]));" \
+            {params.script:q} \
+            {output:q} \
+            {input.json} \
+            2> {log.log}
         """
 
 

@@ -106,11 +106,6 @@ def main_pcr(args, conf, records):
 def main_lamp(args, conf, records):
     stats = defaultdict(int)
 
-    # if val := sconf.get("SEQUENCE_PRIMER"):
-    #     records0 = (record for record in records if val in record)
-    # if val := sconf.get("SEQUENCE_PRIMER_REVCOMP"):
-    #     records0 = (record for record in records if val in record.reverse_complement())
-
     json.dump(conf, fp=sys.stderr, indent=True)
     print(file=sys.stderr)
     print(file=sys.stderr)
@@ -337,8 +332,11 @@ def main_lamp(args, conf, records):
         # counter
         counter[records[iP3].id] += 1
         # append
-        assay = Assay.factory(definition)
-        assays.append(((iP3, counter[records[iP3].id], pos1, pos2), assay, penalty))
+        try:
+            assay = Assay.factory(definition)
+            assays.append(((iP3, counter[records[iP3].id], pos1, pos2), assay, penalty))
+        except:
+            pass
 
     assays.sort(key=lambda x: x[-1])
     for coor, assay, penalty in assays:
@@ -356,7 +354,7 @@ def split_conf(conf):
     )
 
 
-def parse_config(path, cstr):
+def parse_config(path, cstr, global_override):
     cobj = defaultdict(dict)
     for ele in cstr:
         tokens = ele.split(":")
@@ -369,7 +367,10 @@ def parse_config(path, cstr):
         config = json.load(file)
         config["GLOBAL"].update(cobj["GLOBAL"])
         for key in ("F3B3", "F2B2", "F1cB1c", "LFLB"):
-            config[key] = {**config["GLOBAL"], **config[key], **cobj[key]}
+            if global_override:
+                config[key] = {**config[key], **cobj[key], **config["GLOBAL"]}
+            else:
+                config[key] = {**config["GLOBAL"], **config[key], **cobj[key]}
         for key in ("THERMO", "PSET", "LAMP"):
             config[key].update(cobj[key])
     return config
@@ -388,6 +389,7 @@ def parse_args(argv):
         nargs="+",
         default=[],
     )
+    parser.add_argument("--global-override", action="store_true", help="the flag to make GLOBAL override existing subconfig values")
     parser.add_argument("-limit", help="the limit for the number of primer combinations", default=10, type=int)
     parser.add_argument("-proc", help="the number of processes", default=1, type=int)
     parser.add_argument("-out", type=FileType("w"), default="-", help="the output JSON file")
@@ -397,7 +399,8 @@ def parse_args(argv):
 def main(argv):
     # parse args/conf
     args = parse_args(argv[1:])
-    conf = parse_config(args.conf, args.cstr)
+    conf = parse_config(args.conf, args.cstr, args.global_override)
+    json.dump(conf, fp=sys.stderr, indent=True)
 
     # load FASTA
     with args.seqs as file:
