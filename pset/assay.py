@@ -562,7 +562,11 @@ def parse_assays(file, context=(0, 0), comment="#", sniff=True, target_type=str,
         definition = tokens[0][idx5:] + definition[len(tokens[0]): len(definition) - len(tokens[-1])] + tokens[-1][: context[1]]
         targets = set(map(target_type, row["targets"].split(";"))) if "targets" in row else ()
         id = row.get("id")
-        yield Assay.factory(definition, targets, id)
+        try:
+            assay = Assay.factory(definition, targets, id)
+        except:
+            assay = None
+        yield assay, row
 
 
 def write_assays(records, file=sys.stdout, sep="\t"):
@@ -601,7 +605,18 @@ def main(argv):
 
     ids = set(args.ids)
     with args.file as file:
-        assays = list(ele for ele in parse_assays(file, context=context, sniff=False, delimiter="\t") if not ids or ele.id in ids)
+        assays, problems = [], []
+        for idx, ele in enumerate(parse_assays(file, context=context, sniff=False, delimiter="\t"), start=1):
+            rec, row = ele
+            if rec is None:
+                problems.append((idx, row))
+            elif not ids or rec.id in ids:
+                assays.append(rec)
+    
+    nprob = len(problems)
+    w = len(str(len(assays) + nprob))
+    nprob and print(f"problems with {nprob} assay{'s' * (nprob - 1)}:", file=sys.stderr)
+    print(*(f"\t@ row = {idx:0{w}}, id = {row.get('id')}" for idx, row in problems), sep="\n", file=sys.stderr)
 
     if args.command == "records":
         for assay in assays:
