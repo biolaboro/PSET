@@ -52,19 +52,15 @@ app_ui = ui.page_fluid(
                     "output",
                     ui.layout_sidebar(
                         ui.sidebar(
-                            ui.card(
-                                ui.layout_columns(
-                                    ui.input_action_button("report_load", "load"),
-                                    ui.input_action_button("report_save", "save")
-                                )
-                            ),
+                            ui.input_action_button("report_save", "save"),
                             ui.accordion(
                                 ui.accordion_panel(
                                     "data",
+                                    ui.card(ui.input_action_button("report_load", "load")),
                                     ui.card(ui.output_data_frame("report_runs")),
                                 ),
                                 ui.accordion_panel(
-                                    "configure",
+                                    "dimensions",
                                     ui.card(
                                         ui.layout_columns(
                                             ui.input_numeric(f"report_width", "plot width (px)", value=800, min=0, step=100),
@@ -73,17 +69,22 @@ app_ui = ui.page_fluid(
                                     ),
                                 ),
                                 ui.accordion_panel(
-                                    "filter",
+                                    "components",
+                                    ui.card(ui.input_switch(f"report_keyify", "use assay id key", value=False)),
                                     ui.card(
-                                        ui.card(ui.input_switch(f"report_keyify", "use assay id key", value=False)),
-                                        ui.input_checkbox_group(f"report_call", "calls", choices=CALLS, selected=CALLS[:-1], inline=True),
-                                        ui.input_checkbox_group(f"report_comp", "components", choices=COMPONENTS, selected=COMPONENTS, inline=True),
+                                        ui.layout_columns(
+                                            ui.input_checkbox_group(f"report_call", "calls", choices=CALLS, selected=CALLS[:-1], inline=False),
+                                            ui.input_checkbox_group(f"report_comp", "components", choices=COMPONENTS, selected=COMPONENTS, inline=False)
+                                        )
                                     ),
-                                    ui.card(ui.input_select(f"report_taxa", "taxa", choices=[], multiple=True, size=5, width="100%"))
+                                ),
+                                ui.accordion_panel(
+                                    "taxa",
+                                    ui.card(ui.input_select(f"report_taxa", "", choices=[], multiple=True, size=20, width="100%"))
                                 ),
                             ),
                             id="report_sidebar",
-                            width="50%",
+                            width="600px",
                         ),
                         ui.navset_tab(
                             ui.nav_panel(

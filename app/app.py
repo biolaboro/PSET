@@ -5,10 +5,9 @@ from itertools import chain
 from datetime import datetime
 
 import pandas as pd
-import plotnine as p9
+from tempfile import NamedTemporaryFile
 from Bio import SeqIO
-from shiny import App
-from shiny import reactive, render, ui
+from shiny import App, reactive, render, ui
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from taxa.taxa import ancestors, descendants, session_scope
@@ -31,77 +30,22 @@ def server(input, output, session):
     df_mapping = reactive.Value()
     plot_params = reactive.Value()
 
-    def plot_heat_1():
+    def plot_heat(width, height, exts=("png", )):
         df = df_heat_2()
-        pad = " " * max(0, len(str(max(df[["nth", "acc"]].drop_duplicates().value_counts("nth"), default=0))) - max(map(len, df.com.unique().astype(str)), default=0))
-        df = df_heat_2().loc[:, ["assay", "com", "call", "psim", "nth"]].drop_duplicates()
-        df.com = pd.Categorical([pad + ele for ele in df.com.astype(str)], categories=(pad + str(ele) for ele in df.com.unique()[::-1]))
-        return (
-            p9.ggplot(df, p9.aes("nth", "com", fill="psim"))
-            + p9.geom_tile(color="black")
-            + p9.facet_grid(f"assay ~ call", scales="free", space="free")
-            + p9.scale_x_continuous(labels=lambda lst: ["" for _ in lst])
-            + p9.scale_fill_gradientn(
-                colors=("#440154", "#3B528B", "#21918C", "#5ec962", "#fde725"),
-                labels=("0", "75", "|\n80", "|\n99", "      100"),
-                values=(0.0, 0.75, 0.8, 0.99, 1.0),
-                breaks=(0.0, 0.75, 0.8, 0.99, 1.0),
-                limits=(0, 1)
-            )
-            + p9.xlab("")
-            + p9.theme(
-                axis_text=p9.element_text(family="Courier New"),
-                axis_text_x=p9.element_text(rotation=90, size=4),
-                panel_background=p9.element_blank(),
-                panel_border=p9.element_rect(colour="black"),
-                strip_background=p9.element_rect(color="black"),
-                legend_position="top",
-            )
-        )
+        with NamedTemporaryFile() as t1, NamedTemporaryFile(delete=False) as t2:
+            df.to_csv(t1.name, sep="\t", index=False)
+            dims = (str(ele * DPI_PLOT / DPI_APP) for ele in (width, height))
+            cmd = ("Rscript", Path(__file__).parent.resolve() / "heat.R", t1.name, t2.name, *dims, "px", str(DPI_PLOT), *exts)
+            return check_output(cmd, universal_newlines=True).split("\n")
 
-    def plot_heat_2():
-        df = df_heat_2()
-        lcom = max(map(len, df.com.unique().astype(str)), default=0)
-        df = (
-            df[["call", "nth"]].
-            drop_duplicates().
-            merge(df[["nth", "acc"]].drop_duplicates().value_counts("nth").reset_index(name="count"), on="nth", how="left")
-        )
-        width = len(str(df["count"].max()))
-        diff = width - lcom
-        width += abs(diff) if diff < 0 else 0
-        df["dummy"] = " "
-        return (
-            p9.ggplot(df, p9.aes(x="nth", y="count"))
-            + p9.geom_bar(stat="identity")
-            + p9.facet_grid(f"dummy ~ call", scales="free", space="free")
-            + p9.scale_x_continuous(labels=lambda lst: ["" for _ in lst])
-            + p9.scale_y_continuous(labels=lambda lst: [str(int(ele)).zfill(width) for ele in lst])
-            + p9.xlab("hits")
-            + p9.theme(
-                axis_text=p9.element_text(family="Courier New"),
-                axis_text_x=p9.element_text(rotation=90, size=4),
-                panel_background=p9.element_blank(),
-                panel_border=p9.element_rect(colour="black"),
-                strip_background=p9.element_rect(color="black"),
-                strip_text_x=p9.element_blank(),
-                legend_position="bottom"
-            )
-        )
-
-    def plot_muts():
-        return (
-            p9.ggplot(df_muts(), p9.aes(x="pos", y="count")) +
-            p9.geom_bar(p9.aes(fill="mut"), stat="identity") +
-            p9.facet_grid(f"assay ~ com") +
-            p9.guides(fill=p9.guide_legend(nrow=1)) +
-            p9.xlim(1, max_comp_len()) +
-            p9.theme(
-                panel_border=p9.element_rect(color="black"),
-                strip_background=p9.element_rect(color="black"),
-                legend_position="bottom"
-            )
-        )
+    def plot_muts(width, height, exts=("png", )):
+        df = df_muts()
+        with NamedTemporaryFile() as t1, NamedTemporaryFile(delete=False) as t2:
+            df.to_csv(t1.name, sep="\t", index=False)
+            df.to_csv("~/Desktop/df2.tsv", sep="\t", index=False)
+            dims = (str(ele * DPI_PLOT / DPI_APP) for ele in (width, height))
+            cmd = ("Rscript", Path(__file__).parent.resolve() / "muts.R", t1.name, t2.name, *dims, "px", str(DPI_PLOT), *exts)
+            return check_output(cmd, universal_newlines=True).split("\n")
 
     @reactive.Effect
     def _():
@@ -159,23 +103,24 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.report_save, ignore_init=True)
     def _():
-        df = df_conf()
-        name = datetime.now().isoformat().replace(":", "_")
-        path = PATH_RESULTS / "app" / (name + ".tsv")
-        df.to_csv(path, sep="\t")
-        plots = zip(
-            ("heat_1", "heat_2", "muts"),
-            (plot_heat_1, plot_heat_2, plot_muts)
-        )
-        for key, plot_fn in plots:
-            for ext in ("png", "pdf"):
-                print(PATH_RESULTS / "app" / f"{name}_{key}.{ext}")
-                plot_fn().save(PATH_RESULTS / "app" / f"{name}_{key}.{ext}")
+        with ui.Progress(session=session) as prog:
+            df = df_conf()
+            name = datetime.now().isoformat().replace(":", "_")
+            root = PATH_RESULTS / "app"
+            os.makedirs(root, exist_ok=True)
+            prog.set(message="output confusion matrix...")
+            df.to_csv(root.joinpath(f"{name}_conf.tsv"), sep="\t")
+            obj = plot_params()
+            for key, plot_fn in zip(("heat", "muts"), (plot_heat, plot_muts)):
+                width, height = obj[key]["width"], obj[key]["height"]
+                prog.set(message=f"output {key} plot...")
+                for path in map(Path, plot_fn(width, height, exts=("png", "pdf"))):
+                    print(path, path.exists())
+                    path.rename(root / path.with_stem(f"{name}_{key}").name)
 
     @reactive.Effect
     @reactive.event(input.report_load, ignore_init=True)
     def _():
-        print("load data")
         paths = [
             PATH_RESULTS / "pset" / Path(ele.batch, ele.db, ele.id, "call.json")
             for ele in report_runs.data().loc[list(report_runs.cell_selection()["rows"])].itertuples()
@@ -247,7 +192,6 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.report_plot_heat)
     def _():
-        print("filter data heat")
         if len(df := df_heat_1().copy()):
             df["assay"] = df.key if input.report_keyify() else df.id
             df = df[df.call.isin(calls := input.report_call()) & df.com.isin(coms := input.report_comp()) & df.tax.isin(set(map(int, input.report_taxa())))]
@@ -258,7 +202,6 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.report_plot_muts)
     def _():
-        print("filter data muts")
         if len(df := df_heat_1().copy()):
             df = df[df.call.isin(calls := input.report_call()) & df.com.isin(coms := input.report_comp()) & df.tax.isin(set(map(int, input.report_taxa())))]
             if len(df):
@@ -288,21 +231,16 @@ def server(input, output, session):
                 df_muts.set(df)
 
     @render.ui
-    @reactive.event(input.report_width, input.report_height, ignore_init=False)
+    @reactive.event(input.report_plot_heat)
     def report_heat_ui():
-        print("heat dimensions")
-        return ui.TagList(
-            ui.output_plot("report_heat_1", width=input.report_width(), height=input.report_height()),
-            ui.output_plot("report_heat_2", width=input.report_width(), height=input.report_height() * 0.125),
-        )
+        obj = plot_params()[key := input.report_navset_plots()]
+        return ui.TagList(ui.output_image(f"report_{key}", width=obj["width"], height=obj["height"]))
 
     @render.ui
-    @reactive.event(input.report_width, input.report_height, ignore_init=False)
+    @reactive.event(input.report_plot_muts)
     def report_muts_ui():
-        print("muts dimensions")
-        return ui.TagList(
-            ui.output_plot("report_muts", width=input.report_width(), height=input.report_height()),
-        )
+        obj = plot_params()[key := input.report_navset_plots()]
+        return ui.TagList(ui.output_image(f"report_{key}", width=obj["width"], height=obj["height"]))
 
     @render.data_frame
     def report_confusion():
@@ -319,17 +257,19 @@ def server(input, output, session):
             )
         )
 
-    @render.plot()
-    def report_heat_1():
-        return plot_heat_1()
+    @render.image(delete_file=True)
+    @reactive.event(input.report_plot_heat)
+    def report_heat():
+        obj = plot_params()[input.report_navset_plots()]
+        width, height = obj["width"], obj["height"]
+        return dict(src=plot_heat(width, height)[0], width=width, height=height)
 
-    @render.plot()
-    def report_heat_2():
-        return plot_heat_2()
-
-    @render.plot()
+    @render.image(delete_file=True)
+    @reactive.event(input.report_plot_muts)
     def report_muts():
-        return plot_muts()
+        obj = plot_params()[input.report_navset_plots()]
+        width, height = obj["width"], obj["height"]
+        return dict(src=plot_muts(width, height)[0], width=width, height=height)
 
     @output(suspend_when_hidden=False)
     @render.data_frame

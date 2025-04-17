@@ -19,6 +19,8 @@ CPU_COUNT = os.cpu_count()
 DBURL = "sqlite:///resources/taxa/taxa.db"
 PATH_RESULTS = Path("results")
 CONFUSION_AGGREGATE_KEYS = ("batch", "db", "tax", "sci", "rank", "genus", "species", "count")
+DPI_APP = 96
+DPI_PLOT = 300
 
 
 def add_key(df, col="id", key_name="key", key_values=ascii_uppercase):
