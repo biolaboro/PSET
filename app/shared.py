@@ -21,14 +21,27 @@ PATH_RESULTS = Path("results")
 CONFUSION_AGGREGATE_KEYS = ("batch", "db", "tax", "sci", "rank", "genus", "species", "count")
 DPI_APP = 96
 DPI_PLOT = 300
+USER_KEY = "user"
+USER_DEFAULT = "user"
 
 
 def add_key(df, col="id", key_name="key", key_values=ascii_uppercase):
+    """Calculate a unique key column.
+
+    Args:
+        df (pandas.DataFrame): the data frame
+        col (str): the column name to generate a key off of
+        key_name (str): the name of the generated key
+        key_values (list): the list of strings to derive key value from 
+
+    Returns:
+        pandas.DataFrame: the data frame with the new key column
+    """
     values = df[col].unique()
     keys = dict(
         zip(
             values,
-            map("".join, product(ascii_uppercase, repeat=ceil(len(values) / len(key_values))))
+            map("".join, product(key_values, repeat=ceil(len(values) / len(key_values))))
         )
     )
     df[key_name] = [keys[ele] for ele in df[col]]
@@ -37,6 +50,17 @@ def add_key(df, col="id", key_name="key", key_values=ascii_uppercase):
 
 
 def read_func(path, read_func, *args, **kwargs):
+    """Wrapper function for pandas read_* methods...
+
+    Args:
+        path (str): the file path
+        read_func (function): the read_* function
+        args: forwarded to the read_* function
+        kwargs: forwarded to the read_* function
+
+    Returns:
+        pandas.DataFrame: the data frame
+    """
     try:
         return read_func(path, *args, **kwargs)
     except pd.errors.EmptyDataError:
@@ -44,6 +68,14 @@ def read_func(path, read_func, *args, **kwargs):
 
 
 def read_hits(path):
+    """Read hits from PSET call.json file as dictionaries.
+
+    Args:
+        path (str): the file
+
+    Yiels:
+        dict: the next hit result
+    """
     keys = ("id", "com", "psim", "astr", "call", "acc")
     with path.open() as file:
         obj = json.load(file)
@@ -60,6 +92,16 @@ def read_hits(path):
 
 
 def blastdb_taxidlist(db, taxa, outfmt="%T"):
+    """Call blastdbcmd to list taxonomy metadata.
+
+    Args:
+        db (str): the BLAST+ database
+        taxa (list): the list of taxonomy identifiers
+        outfmt (str): the blastdbcmd outfmt parameter
+
+    Yields:
+        str: the next output line
+    """
     try:
         cmd = ("blastdbcmd", "-db", db, "-outfmt", outfmt, "-no_taxid_expansion", "-taxidlist", "-")
         with Popen(cmd, stdin=PIPE, stdout=PIPE, universal_newlines=True) as proc:
@@ -72,6 +114,17 @@ def blastdb_taxidlist(db, taxa, outfmt="%T"):
 
 
 def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
+    """Count the taxon and its relatives in the BLAST+ database.
+
+    Args:
+        curs: the open database cursor
+        db: the BLAST+ database
+        taxon: the taxonomy identifier
+        near_neighbors: the flag to include near neibors
+    
+    Return:
+        Counter: the taxon counts
+    """
     parent_tax_id = ancestors(curs, taxon)[-1]["parent_" * near_neighbors + "tax_id"]
     lineage = ancestors(curs, parent_tax_id)
     infos = [
@@ -108,6 +161,11 @@ def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
 
 
 def blastdbcmd_info():
+    """List available BLAST+ databases and metadata.
+    
+    Returns:
+        pd.DataFrame: the info
+    """
     fields = "\t".join(("%f", "%p", "%t", "%d", "%l", "%n", "%U", "%v"))
     cmd = ("blastdbcmd", "-recursive", "-remove_redundant_dbs", "-list", BLAST_DIR, "-list_outfmt", fields)
     with Popen(cmd, stdout=PIPE, universal_newlines=True) as proc:
@@ -117,15 +175,25 @@ def blastdbcmd_info():
 
 
 def nucl_db_v5_choices():
+    """List available nucleotide BLAST+ v5 databases and metadata.
+    
+    Returns:
+        dict: the info
+    """
     data = blastdbcmd_info()
     data = data[(data["type"] == "Nucleotide") & (data["version"] == 5)]
     return dict(zip(data["path"], data["title"]))
 
 
-def monitor_snakemake(session, cmd, db):
-    print(cmd)
+def monitor_snakemake(session, cmd, msg=None):
+    """Run snakemake and monitor progress.
+    
+    Args:
+        session: the Shiny session
+        cmd: the command tuple to run
+        msg: the message to display
+    """
     with ui.Progress(min=0, max=100, session=session) as prog:
-        msg = f"{Path(db).stem} > running"
         prog.set(message=msg, detail=" ".join(cmd))
         with Popen(cmd, universal_newlines=True, bufsize=1, stderr=PIPE) as proc:
             with proc.stderr as file:

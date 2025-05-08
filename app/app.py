@@ -1,3 +1,4 @@
+import os
 import json
 from pathlib import Path
 from subprocess import check_call, check_output
@@ -17,6 +18,7 @@ from ui import *
 
 
 def server(input, output, session):
+    user = reactive.Value()
     agen_expected_output = reactive.Value()
     max_comp_len = reactive.Value()
     df_conf = reactive.Value()
@@ -49,6 +51,8 @@ def server(input, output, session):
 
     @reactive.Effect
     def _():
+        # headers
+        user.set(session.http_conn.headers.get(USER_KEY, USER_DEFAULT))
         # populate local databases
         choices = nucl_db_v5_choices()
         ui.update_select("database", choices=choices, session=session)
@@ -85,15 +89,17 @@ def server(input, output, session):
     @render.data_frame
     def report_runs():
         data = []
-        for ele in sorted(PATH_RESULTS.rglob("pset/*/*/*/assay.json")):
+        for ele in sorted(PATH_RESULTS.joinpath(user()).rglob("pset/*/*/*/assay.json")):
             if ele.with_name("call.json").exists():
+                stat = ele.stat()
+                date = datetime.fromtimestamp(stat.st_ctime if os.name == "nt" else stat.st_birthtime).strftime("%Y-%m-%d")
                 with ele.open() as file:
                     obj = json.load(file)
                     data.append(dict(zip(
-                        ("batch", "db", "id", "type", "targets"),
-                        (ele.parts[-4], ele.parts[-3], ele.parts[-2], obj["type"], obj["targets"])
+                        ("date", "batch", "db", "id", "type", "targets"),
+                        (date, ele.parts[-4], ele.parts[-3], ele.parts[-2], obj["type"], obj["targets"])
                     )))
-        return render.DataTable(pd.DataFrame(data), selection_mode="rows", filters=True)
+        return render.DataTable(pd.DataFrame(data), selection_mode="rows", width="100%", filters=True)
 
     @reactive.Effect
     def _():
@@ -106,7 +112,7 @@ def server(input, output, session):
         with ui.Progress(session=session) as prog:
             df = df_conf()
             name = datetime.now().isoformat().replace(":", "_")
-            root = PATH_RESULTS / "app"
+            root = PATH_RESULTS / user() / "app"
             os.makedirs(root, exist_ok=True)
             prog.set(message="output confusion matrix...")
             df.to_csv(root.joinpath(f"{name}_conf.tsv"), sep="\t")
@@ -115,14 +121,13 @@ def server(input, output, session):
                 width, height = obj[key]["width"], obj[key]["height"]
                 prog.set(message=f"output {key} plot...")
                 for path in map(Path, plot_fn(width, height, exts=("png", "pdf"))):
-                    print(path, path.exists())
                     path.rename(root / path.with_stem(f"{name}_{key}").name)
 
     @reactive.Effect
     @reactive.event(input.report_load, ignore_init=True)
     def _():
         paths = [
-            PATH_RESULTS / "pset" / Path(ele.batch, ele.db, ele.id, "call.json")
+            PATH_RESULTS / user() / "pset" / Path(ele.batch, ele.db, ele.id, "call.json")
             for ele in report_runs.data().loc[list(report_runs.cell_selection()["rows"])].itertuples()
         ]
         df_hits = pd.DataFrame(chain.from_iterable(map(read_hits, paths)))
@@ -155,8 +160,7 @@ def server(input, output, session):
                     size().
                     reset_index(name="count")
                 )
-                df_taxa = df_taxa if len(df_taxa) else df_conf_temp[columns].drop_duplicates()
-
+                df_taxa = pd.concat((df_taxa, df_conf_temp[columns])).drop_duplicates(subset=["tax"], keep="first")
                 prog.set(message="query scientific names...")
                 with session_scope(sessionmaker(bind=create_engine(DBURL))) as curs:
                     rows = []
@@ -167,10 +171,11 @@ def server(input, output, session):
                         rows.append(dict(zip(
                             ("db", "tax", "sci", "rank", "genus", "genus_tax", "species"),
                             (ele["db"], ele["tax"], lineage[-1]["name_txt"], lineage[-1]["rank"], genus.get("name_txt", ""), genus.get("tax_id", ""), species.get("name_txt", "")
-                             ))))
+                        ))))
                     df_sci = pd.DataFrame(rows if rows else dict(db=pd.Series(dtype=str), tax=pd.Series(dtype=int), sci=pd.Series(dtype=str)))
 
                 prog.set(message="set confusion matrix...")
+                df_conf_temp.call = pd.Categorical(df_conf_temp.call, categories=CALLS)
                 df_conf.set(df_conf_temp.merge(df_taxa, on=columns, how="left").merge(df_sci, on=columns))
 
                 prog.set(message="set taxa dropdowns...")
@@ -192,43 +197,42 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.report_plot_heat)
     def _():
-        if len(df := df_heat_1().copy()):
-            df["assay"] = df.key if input.report_keyify() else df.id
-            df = df[df.call.isin(calls := input.report_call()) & df.com.isin(coms := input.report_comp()) & df.tax.isin(set(map(int, input.report_taxa())))]
-            df.com = pd.Categorical(df.com, categories=(ele for ele in coms if ele in df.com.unique()))
-            df.call = pd.Categorical(df.call, categories=(ele for ele in calls if ele in df.call.unique()))
-            df_heat_2.set(df)
+        df = df_heat_1().copy()
+        df["assay"] = df.key if input.report_keyify() else df.id
+        df = df[df.call.isin(calls := input.report_call()) & df.com.isin(coms := input.report_comp()) & df.tax.isin(set(map(int, input.report_taxa())))]
+        df.com = pd.Categorical(df.com, categories=(ele for ele in coms if ele in df.com.unique()))
+        df.call = pd.Categorical(df.call, categories=(ele for ele in calls if ele in df.call.unique()))
+        df_heat_2.set(df)
 
     @reactive.Effect
     @reactive.event(input.report_plot_muts)
     def _():
-        if len(df := df_heat_1().copy()):
-            df = df[df.call.isin(calls := input.report_call()) & df.com.isin(coms := input.report_comp()) & df.tax.isin(set(map(int, input.report_taxa())))]
-            if len(df):
-                columns = ["id", "key", "com", "call", "astr"]
-                records = (
-                    df[~df.astr.str.contains(f"^[{AlignType.IDN.value}{AlignType.SIM.value}]+$", regex=True)].
-                    groupby(columns, observed=True).
-                    size().
-                    reset_index(name="count").
-                    to_dict(orient="records")
-                )
-                columns = ["id", "key", "com", "call", "pos", "mut", "count"]
-                df = pd.DataFrame(
-                    dict(zip(columns, (obj["id"], obj["key"], obj["com"], obj["call"], idx, ele, obj["count"])))
-                    for obj in records
-                    for idx, ele in enumerate(map(int, obj["astr"]), start=1)
-                    if ele not in (AlignType.IDN.value, AlignType.SIM.value)
-                )
-                if len(df):
-                    df = df.groupby(columns[:-1], observed=True).sum().reset_index()
-                    muts = [None, *(ele.name for ele in AlignType)]
-                    df.mut = pd.Categorical([muts[ele] for ele in df.mut], categories=(ele.name for ele in AlignType if ele.name not in ("IDN", "SIM")))
-                    df.com = pd.Categorical(df.com, categories=(ele for ele in coms if ele in df.com.unique()))
-                    df.call = pd.Categorical(df.call, categories=(ele for ele in calls if ele in df.call.unique()))
-                    df = df.groupby(df.columns.tolist()[:-1], observed=True).sum().reset_index()
-                df["assay"] = df.key if input.report_keyify() else df.id
-                df_muts.set(df)
+        df = df_heat_1().copy()
+        df = df[df.call.isin(calls := input.report_call()) & df.com.isin(coms := input.report_comp()) & df.tax.isin(set(map(int, input.report_taxa())))]
+        columns = ["id", "key", "com", "call", "astr"]
+        records = (
+            df[~df.astr.str.contains(f"^[{AlignType.IDN.value}{AlignType.SIM.value}]+$", regex=True)].
+            groupby(columns, observed=True).
+            size().
+            reset_index(name="count").
+            to_dict(orient="records")
+        )
+        columns = ["id", "key", "com", "call", "pos", "mut", "count"]
+        df = pd.DataFrame(
+            dict(zip(columns, (obj["id"], obj["key"], obj["com"], obj["call"], idx, ele, obj["count"])))
+            for obj in records
+            for idx, ele in enumerate(map(int, obj["astr"]), start=1)
+            if ele not in (AlignType.IDN.value, AlignType.SIM.value)
+        )
+        if len(df):
+            df = df.groupby(columns[:-1], observed=True).sum().reset_index()
+            muts = [None, *(ele.name for ele in AlignType)]
+            df.mut = pd.Categorical([muts[ele] for ele in df.mut], categories=(ele.name for ele in AlignType if ele.name not in ("IDN", "SIM")))
+            df.com = pd.Categorical(df.com, categories=(ele for ele in coms if ele in df.com.unique()))
+            df.call = pd.Categorical(df.call, categories=(ele for ele in calls if ele in df.call.unique()))
+            df = df.groupby(df.columns.tolist()[:-1], observed=True).sum().reset_index()
+            df["assay"] = df["key"] if input.report_keyify() else df.id
+        df_muts.set(df)
 
     @render.ui
     @reactive.event(input.report_plot_heat)
@@ -293,7 +297,7 @@ def server(input, output, session):
                 if nprob else
                 f"Loaded {len(data)} assay{'s' * (len(data) > 1)}!"
             )
-            return render.DataTable(pd.DataFrame(data), width="100%")
+            return render.DataTable(pd.DataFrame(data), width="100%", filters=True)
 
     @output(suspend_when_hidden=False)
     @render.data_frame
@@ -307,7 +311,7 @@ def server(input, output, session):
         if not info:
             return
         label = Path(info[0]["name"]).stem
-        path_out = PATH_RESULTS / "pset" / label
+        path_out = PATH_RESULTS / user() / "pset" / label
         os.makedirs(path_out, exist_ok=True)
         for _, db in enumerate(input.database(), start=1):
             path_config = path_out.joinpath("config.json")
@@ -348,7 +352,7 @@ def server(input, output, session):
                 "target_tsv",
             )
             cmd = list(filter(len, cmd))
-            monitor_snakemake(session, cmd, db)
+            monitor_snakemake(session, cmd, f"{Path(db).stem} > running")
 
     @reactive.Effect
     @reactive.event(input.info_fasta)
@@ -442,9 +446,9 @@ def server(input, output, session):
             prog.set(message=f"calculating {(mode := input.lineage_mode())}...")
             with session_scope(sessionmaker(bind=create_engine(DBURL))) as curs:
                 if mode == "ancestors":
-                    return pd.DataFrame(ancestors(curs, input.tax_id()))
+                    return render.DataTable(pd.DataFrame(ancestors(curs, input.tax_id())), width="100%")
                 elif mode == "descendants":
-                    return pd.DataFrame(descendants(curs, input.tax_id()))
+                    return render.DataTable(pd.DataFrame(descendants(curs, input.tax_id())), width="100%")
                 elif mode == "count":
                     qry = "count >= 0" if input.missing_taxa() else "count > 0"
                     if len(df := pd.DataFrame(count_nntaxa_in_blastdb(curs, input.taxa_blastdb(), input.tax_id(), input.near_neighbors()).values())):
@@ -466,18 +470,18 @@ def server(input, output, session):
             df_remote_db.set(data)
 
     @output(suspend_when_hidden=False)
-    @render.table
+    @render.data_frame
     def remote_databases():
         data = df_remote_db()
         choices = {ele: ele for ele in data["name"]}
         selected = "nt" if "nt" in data["name"].values else data["name"][0]
         ui.update_select("select_db", choices=choices, selected=selected, session=session)
-        return data
+        return render.DataTable(data, width="100%")
 
     @reactive.Effect
     @reactive.event(input.run_database_download)
     def download():
-        if not input.select_db():
+        if not (db := input.select_db()):
             return
         cmd = (
             "snakemake",
@@ -489,11 +493,11 @@ def server(input, output, session):
             "-s",
             "workflow/rules/setup.smk",
             "--config",
-            f"db={input.select_db()}",
+            f"db={db}",
             "--",
             "download",
         )
-        monitor_snakemake(session, cmd)
+        monitor_snakemake(session, cmd, f"{db} > running")
         ui.update_select("database", choices=nucl_db_v5_choices(), session=session)
 
     @reactive.Effect
@@ -503,7 +507,7 @@ def server(input, output, session):
         if not info:
             return
         label = Path(info[0]["name"]).stem
-        path_out = PATH_RESULTS / "agen" / label
+        path_out = PATH_RESULTS / user() / "agen" / label
         agen_expected_output.set(
             [(path_out / ele.id / input.agen_mode()).with_suffix(".tsv") for ele in SeqIO.parse(info[0]["datapath"], "fasta")]
         )

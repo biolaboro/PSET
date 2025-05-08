@@ -84,7 +84,7 @@ app_ui = ui.page_fluid(
                                 ),
                             ),
                             id="report_sidebar",
-                            width="600px",
+                            width="800px",
                         ),
                         ui.navset_tab(
                             ui.nav_panel(
@@ -146,7 +146,7 @@ app_ui = ui.page_fluid(
                     ui.input_action_button("run_database_download", "⓶ download database", enabled=False),
                     width="400px",
                 ),
-                ui.output_table("remote_databases"),
+                ui.output_data_frame("remote_databases"),
             ),
         ),
         ui.nav_panel(

@@ -66,7 +66,6 @@ if config.get("db"):
             db=config["db"],
             decompress=config.get("decompress", ""),
             source=config.get("source", "ncbi"),
-            blastdb_version=5,
             out=root / "blast" / config["db"],
         threads: 4
         shell:
@@ -77,7 +76,6 @@ if config.get("db"):
             update_blastdb.pl \
                 --source {params.source:q} \
                 "${{decompress:+--decompress}}" \
-                --blastdb_version {params.blastdb_version:q} \
                 --num_threads {threads} \
                 {params.db:q} | \
                 tee {output.log:q}
