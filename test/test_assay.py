@@ -408,10 +408,15 @@ class Test(unittest.TestCase):
         self.assertEqual("".join(assay.embrace(qaln, saln)), "[ATTTTTG]GG(AT)TA[CAC]")
 
     def test_parse_assays(self):
+        # id	targets	definition
+        # assay-1	666	[GAT]T[ACA]
+        # assay-2	666;662	[GAT](T)[ACA]
+        # assay-3	666;662	CAT[GAT](T)[ACA]TAG
+        # assay-4	666;662	CAT[GATTACA]TAG
         path = root / "assay.tsv"
         with path.open() as file:
             self.assertListEqual(
-                list(parse_assays(file)),
+                [ele for ele, _ in parse_assays(file)],
                 [
                     Assay.factory("[GAT]T[ACA]", {"666"}, "assay-1"),
                     Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-2"),
@@ -421,7 +426,7 @@ class Test(unittest.TestCase):
             )
             file.seek(0)
             self.assertListEqual(
-                list(parse_assays(file, context=(0, 1))),
+                [ele for ele, _ in parse_assays(file, context=(0, 1))],
                 [
                     Assay.factory("[GAT]T[ACA]", {"666"}, "assay-1"),
                     Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-2"),
@@ -431,7 +436,7 @@ class Test(unittest.TestCase):
             )
             file.seek(0)
             self.assertListEqual(
-                list(parse_assays(file, context=(1, 0))),
+                [ele for ele, _ in parse_assays(file, context=(1, 0))],
                 [
                     Assay.factory("[GAT]T[ACA]", {"666"}, "assay-1"),
                     Assay.factory("[GAT](T)[ACA]", {"666", "662"}, "assay-2"),
@@ -446,6 +451,6 @@ class Test(unittest.TestCase):
                 Assay.factory("CAT[GAT](T)[ACA]TAG", {"666", "662"}, "assay-3"),
                 Assay.factory("CAT[GATTACA]TAG", {"666", "662"}, "assay-4"),
             ]
-            self.assertListEqual(list(parse_assays(file, context=(3, 3))), answer)
+            self.assertListEqual([ele for ele, _ in parse_assays(file, context=(3, 3))], answer)
             file.seek(0)
-            self.assertListEqual(list(parse_assays(file, context=(4, 4))), answer)
+            self.assertListEqual([ele for ele, _ in parse_assays(file, context=(4, 4))], answer)

@@ -275,7 +275,7 @@ Result files are available on the sidebar and organized under the individual "As
 
 The following will run each test and indicate failure or success.
 ```bash
-python -m unittest discover -v -s ./test -p test_*.py
+python -m unittest discover -v -s test
 ```
 
 ### download BLAST+ database

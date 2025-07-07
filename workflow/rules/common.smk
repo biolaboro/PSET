@@ -29,4 +29,15 @@ base = Path(workflow.basedir)
 # load assays
 ids = set(config.get("assays", "").split(",")) - {""}
 with open(config["file"]) as file:
-    assays = {ele.id: ele for ele in parse_assays(file, context=context, target_type=int) if not ids or ele.id in ids}
+    # assays = {ele.id: ele for ele in parse_assays(file, context=context, target_type=int) if not ids or ele.id in ids}
+    assays, problems = [], []
+    for idx, ele in enumerate(parse_assays(file, context=context, target_type=int), start=1):
+        rec, row = ele
+        if rec is None:
+            problems.append((idx, row))
+        elif not ids or rec.id in ids:
+            assays.append(rec)
+    nprob = len(problems)
+    w = len(str(len(assays) + nprob))
+    nprob and print(f"problems with {nprob} assay{'s' * (nprob - 1)}:", file=sys.stderr)
+    assays = { ele.id: ele for ele in assays }
