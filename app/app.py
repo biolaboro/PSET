@@ -34,7 +34,7 @@ def server(input, output, session):
 
     def plot_heat(width, height, exts=("png", )):
         df = df_heat_2()
-        with NamedTemporaryFile() as t1, NamedTemporaryFile(delete=False) as t2:
+        with NamedTemporaryFile() as t1, NamedTemporaryFile() as t2:
             df.to_csv(t1.name, sep="\t", index=False)
             dims = (str(ele * DPI_PLOT / DPI_APP) for ele in (width, height))
             cmd = ("Rscript", Path(__file__).parent.resolve() / "heat.R", t1.name, t2.name, *dims, "px", str(DPI_PLOT), *exts)
@@ -42,7 +42,7 @@ def server(input, output, session):
 
     def plot_muts(width, height, exts=("png", )):
         df = df_muts()
-        with NamedTemporaryFile() as t1, NamedTemporaryFile(delete=False) as t2:
+        with NamedTemporaryFile() as t1, NamedTemporaryFile() as t2:
             df.to_csv(t1.name, sep="\t", index=False)
             df.to_csv("~/Desktop/df2.tsv", sep="\t", index=False)
             dims = (str(ele * DPI_PLOT / DPI_APP) for ele in (width, height))

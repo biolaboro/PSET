@@ -252,7 +252,7 @@ class Assay(object):
             id (str): the assay identifier
 
         Returns:
-            _type_: _description_
+            Assay: the assay
         """
         definition = definition.upper()
         assay = next((ele for ele in subclasses(Assay) if re.match(ele.regex, definition)))

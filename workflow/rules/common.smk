@@ -36,10 +36,8 @@ with open(config["file"]) as file:
         if rec is None:
             problems.append((idx, row))
         elif not ids or rec.id in ids:
-            print(rec.id)
             assays.append(rec)
     nprob = len(problems)
     w = len(str(len(assays) + nprob))
     nprob and print(f"problems with {nprob} assay{'s' * (nprob - 1)}:", file=sys.stderr)
-    print(*(f"\t@ row = {idx:0{w}}, id = {row.get('id')}" for idx, row in problems), sep="\n", file=sys.stderr)
     assays = { ele.id: ele for ele in assays }

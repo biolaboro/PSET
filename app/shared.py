@@ -21,8 +21,8 @@ PATH_RESULTS = Path("results")
 CONFUSION_AGGREGATE_KEYS = ("batch", "db", "tax", "sci", "rank", "genus", "species", "count")
 DPI_APP = 96
 DPI_PLOT = 300
-USER_KEY = "user"
-USER_DEFAULT = "user"
+USER_KEY = "user"  # this holds the header key to retrieve the user id
+USER_DEFAULT = "user"  # this is the default user id value if not in the header
 
 
 def add_key(df, col="id", key_name="key", key_values=ascii_uppercase):
