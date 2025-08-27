@@ -395,7 +395,7 @@ Hits...
 # Cite
 
 Please cite the most relevant paper...
-
+* Negrón, Daniel Antonio, Shipra Trivedi, Nicholas Tolli, et al. “Loop-Mediated Isothermal Amplification Assays for the Detection of Antimicrobial Resistance Elements in Vibrio Cholera.” BMC Bioinformatics 25, no. 1 (2024): 384. https://doi.org/10.1186/s12859-024-06001-3.
 * Negrón, Daniel Antonio, Nicholas Tolli, Stephanie Guertin, Suzanne Wollen-Roberts, Shane Mitchell, Jared Haas, Catherine Pratt, et al. “Clade-Specific MPXV PCR Assays.” bioRxiv, April 28, 2023. https://doi.org/10.1101/2023.04.24.538151.
 * Negrón, Daniel Antonio, June Kang, Shane Mitchell, Mitchell Y. Holland, Stephen Wist, Jameson Voss, Lauren Brinkac, et al. “Impact of SARS-CoV-2 Mutations on PCR Assay Sequence Alignment.” Frontiers in Public Health 10 (April 28, 2022). https://doi.org/10.3389/fpubh.2022.889973.
 * Holland, Mitchell, Daniel Negrón, Shane Mitchell, Nate Dellinger, Mychal Ivancich, Tyler Barrus, Sterling Thomas, Katharine W. Jennings, Bruce Goodwin, and Shanmuga Sozhamannan. “BioLaboro: A Bioinformatics System for Detecting Molecular Assay Signature Erosion and Designing New Assays in Response to Emerging and Reemerging Pathogens,” April 10, 2020. https://doi.org/10.1101/2020.04.08.031963.
