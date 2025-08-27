@@ -92,7 +92,7 @@ def server(input, output, session):
         for ele in sorted(PATH_RESULTS.joinpath(user()).rglob("pset/*/*/*/assay.json")):
             if ele.with_name("call.json").exists():
                 stat = ele.stat()
-                date = datetime.fromtimestamp(stat.st_ctime if os.name == "nt" else stat.st_birthtime).strftime("%Y-%m-%d")
+                date = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
                 with ele.open() as file:
                     obj = json.load(file)
                     data.append(dict(zip(
@@ -160,7 +160,7 @@ def server(input, output, session):
                     size().
                     reset_index(name="count")
                 )
-                df_taxa = pd.concat((df_taxa, df_conf_temp[columns])).drop_duplicates(subset=["tax"], keep="first")
+                df_taxa = pd.concat((df_taxa, df_conf_temp[columns])).drop_duplicates(subset=["db", "tax"], keep="first")
                 prog.set(message="query scientific names...")
                 with session_scope(sessionmaker(bind=create_engine(DBURL))) as curs:
                     rows = []
@@ -175,8 +175,7 @@ def server(input, output, session):
                     df_sci = pd.DataFrame(rows if rows else dict(db=pd.Series(dtype=str), tax=pd.Series(dtype=int), sci=pd.Series(dtype=str)))
 
                 prog.set(message="set confusion matrix...")
-                df_conf_temp.call = pd.Categorical(df_conf_temp.call, categories=CALLS)
-                df_conf.set(df_conf_temp.merge(df_taxa, on=columns, how="left").merge(df_sci, on=columns))
+                df_conf.set(df_conf_temp.merge(df_taxa, on=columns, how="left").merge(df_sci, on=columns, how="left"))
 
                 prog.set(message="set taxa dropdowns...")
                 choices = defaultdict(dict)
@@ -250,16 +249,19 @@ def server(input, output, session):
     def report_confusion():
         columns = ["id", "key", *input.report_aggregate(), "call"]
         df = df_conf()
-        return (
-            render.DataTable(
-                df.
-                groupby(columns, group_keys=False, as_index=False, dropna=False, observed=True).
-                size().
-                pivot(index=columns[:-1], columns=columns[-1], values="size").reset_index().rename_axis(None, axis=1).
-                merge(df[["id", "key"]].drop_duplicates(), on=["id", "key"], how="left"),
-                width="100%"
-            )
+        df = (
+            df.
+              groupby(columns, group_keys=False, as_index=False, dropna=False, observed=True).
+              size().
+              pivot(index=columns[:-1], columns=columns[-1], values="size").reset_index().rename_axis(None, axis=1).
+              merge(df[["id", "key"]].drop_duplicates(), on=["id", "key"], how="left").
+              fillna(0)
         )
+        for ele in CALLS:
+            if ele not in df:
+                df[ele] = 0
+        df = df[["id", "key", *input.report_aggregate(), *CALLS]]
+        return render.DataTable(df, width="100%")
 
     @render.image(delete_file=True)
     @reactive.event(input.report_plot_heat)
