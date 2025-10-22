@@ -2,7 +2,9 @@ from shiny import ui
 
 from shared import *
 
+
 app_ui = ui.page_fluid(
+    ui.tags.style("#log { font-family: monospace; background-color: black; color: green; }"),
     ui.navset_card_pill(
         ui.nav_panel(
             "PSET",
@@ -43,8 +45,8 @@ app_ui = ui.page_fluid(
                             width="400px"
                         ),
                         ui.navset_tab(
-                            ui.nav_panel("assay", ui.card(ui.output_data_frame("assay_table"))),
-                            ui.nav_panel("databases", ui.card(ui.output_data_frame("database_table")))
+                            ui.nav_panel("assay", ui.output_data_frame("assay_table")),
+                            ui.nav_panel("databases", ui.output_data_frame("database_table"))
                         ),
                     ),
                 ),
@@ -52,53 +54,50 @@ app_ui = ui.page_fluid(
                     "output",
                     ui.layout_sidebar(
                         ui.sidebar(
-                            ui.input_action_button("report_save", "save"),
                             ui.accordion(
                                 ui.accordion_panel(
                                     "data",
-                                    ui.card(ui.input_action_button("report_load", "load")),
-                                    ui.card(ui.output_data_frame("report_runs")),
+                                    ui.input_action_button("report_load", "load"),
+                                    ui.input_action_button("report_delete", "delete"),
+                                    ui.download_button("report_download", "download"),
+                                    ui.hr(),
+                                    ui.output_data_frame("report_runs"),
                                 ),
                                 ui.accordion_panel(
                                     "dimensions",
-                                    ui.card(
-                                        ui.layout_columns(
-                                            ui.input_numeric(f"report_width", "plot width (px)", value=800, min=0, step=100),
-                                            ui.input_numeric(f"report_height", "plot height (px)", value=800, min=0, step=100),
-                                        ),
+                                    ui.layout_columns(
+                                        ui.input_numeric(f"report_width", "plot width (px)", value=800, min=0, step=100),
+                                        ui.input_numeric(f"report_height", "plot height (px)", value=800, min=0, step=100),
                                     ),
                                 ),
                                 ui.accordion_panel(
                                     "components",
-                                    ui.card(ui.input_switch(f"report_keyify", "use assay id key", value=False)),
-                                    ui.card(
-                                        ui.layout_columns(
-                                            ui.input_checkbox_group(f"report_call", "calls", choices=CALLS, selected=CALLS[:-1], inline=False),
-                                            ui.input_checkbox_group(f"report_comp", "components", choices=COMPONENTS, selected=COMPONENTS, inline=False)
-                                        )
-                                    ),
+                                    ui.input_switch(f"report_keyify", "use assay id key", value=False),
+                                    ui.layout_columns(
+                                        ui.input_checkbox_group(f"report_call", "calls", choices=CALLS, selected=CALLS[:-1], inline=False),
+                                        ui.input_checkbox_group(f"report_comp", "components", choices=COMPONENTS, selected=COMPONENTS, inline=False)
+                                    )
                                 ),
                                 ui.accordion_panel(
                                     "taxa",
-                                    ui.card(ui.input_select(f"report_taxa", "", choices=[], multiple=True, size=20, width="100%"))
+                                    ui.input_select(f"report_taxa", "", choices=[], multiple=True, size=20, width="100%")
                                 ),
                             ),
                             id="report_sidebar",
                             width="800px",
                         ),
+                        ui.download_button("report_save", "save"),
                         ui.navset_tab(
                             ui.nav_panel(
                                 "tables",
-                                ui.card(
-                                    ui.input_checkbox_group(
-                                        "report_aggregate",
-                                        "aggregate by assay id, including",
-                                        choices=CONFUSION_AGGREGATE_KEYS,
-                                        selected=CONFUSION_AGGREGATE_KEYS[1],
-                                        inline=True
-                                    )
+                                ui.input_checkbox_group(
+                                    "report_aggregate",
+                                    "aggregate by assay id, including",
+                                    choices=CONFUSION_AGGREGATE_KEYS,
+                                    selected=CONFUSION_AGGREGATE_KEYS[1],
+                                    inline=True
                                 ),
-                                ui.card(ui.output_data_frame("report_confusion")),
+                                ui.output_data_frame("report_confusion"),
                             ),
                             ui.nav_panel(
                                 "plots",
@@ -106,18 +105,17 @@ app_ui = ui.page_fluid(
                                     *(
                                         ui.nav_panel(
                                             ele,
-                                            ui.card(
-                                                ui.card(ui.input_action_button(f"report_plot_{ele}", "plot")),
-                                                ui.card(ui.output_ui(f"report_{ele}_ui"), open=True)
-                                            )
+                                            ui.card(ui.input_action_button(f"report_plot_{ele}", "plot")),
+                                            ui.card(ui.output_ui(f"report_{ele}_ui"))
                                         ) for ele in ("heat", "muts")
                                     ),
                                     id="report_navset_plots"
                                 )
-                            )
+                            ),
                         ),
                     ),
                 ),
+                id="report_nav"
             ),
         ),
         ui.nav_panel(
@@ -131,10 +129,10 @@ app_ui = ui.page_fluid(
                     ui.input_file("info_fasta", "DNA sequences (FASTA)"),
                     ui.input_file("info_taxon", "accession-taxon mapping"),
                     ui.input_text("db_title", "title"),
-                    ui.input_action_button("run_build", "build"),
+                    ui.input_action_button("run_build", "build", disabled=True),
                     width="400px",
                 ),
-                ui.output_table("result_mapping"),
+                ui.output_data_frame("result_mapping"),
             ),
         ),
         ui.nav_panel(
@@ -171,7 +169,20 @@ app_ui = ui.page_fluid(
                     ),
                     width="400px",
                 ),
-                ui.output_table("agen_output"),
+                ui.navset_card_pill(
+                    ui.nav_panel(
+                        "input",
+                        ui.output_data_frame("agen_sequences"),
+                    ),
+                    ui.nav_panel(
+                        "output",
+                        ui.download_button("agen_download", "download"),
+                        ui.input_action_button("agen_delete", "delete"),
+                        ui.hr(),
+                        ui.output_data_frame("agen_assays"),
+                    ),
+                    id="agen_nav"
+                ),
             ),
         ),
         ui.nav_panel(
@@ -189,6 +200,18 @@ app_ui = ui.page_fluid(
                     width="400px",
                 ),
                 ui.output_data_frame("taxa_table"),
+            ),
+        ),
+        ui.nav_panel(
+            "POOL",
+            ui.navset_tab(
+                ui.nav_panel("pool_status", ui.output_data_frame("pool")),
+                ui.nav_panel(
+                    "pool_log",
+                    autoscrollify(ui.input_text_area("log", None, rows=25, width="100%", spellcheck=False)),
+                    ui.input_action_button("cancel_task", "cancel", width="100%"),
+                ),
+                id="pool_nav"
             ),
         ),
         id="tabs",
