@@ -16,9 +16,13 @@ confs = {ele.stem: ele for ele in path_conf.glob("*.json")}
 accs = [record.id for record in SeqIO.parse(path_file, "fasta")]
 targets = {}
 if "targets" in config:
-    with open(config["targets"]) as file:
-        targets = dict(ele.split("\t", maxsplit=1) for ele in map(str.strip, file))
-
+    if path := Path(str(config["targets"])).exists():
+        with open(config["targets"]) as file:
+            targets = dict(ele.split("\t", maxsplit=1) for ele in map(str.strip, file))
+    elif "," in str(config["targets"]):
+        targets = dict(ele.split("=") for ele in config["targets"].split(","))
+    else:
+        targets = { ele: config["targets"] for ele in accs }
 
 rule split:
     input:

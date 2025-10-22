@@ -1,5 +1,7 @@
 import os
 import json
+import shutil
+import sqlite3
 from pathlib import Path
 from subprocess import check_call, check_output
 from itertools import chain
@@ -31,6 +33,7 @@ def server(input, output, session):
     df_sequences = reactive.Value()
     df_mapping = reactive.Value()
     plot_params = reactive.Value()
+    pool_id = reactive.Value()
 
     def plot_heat(width, height, exts=("png", )):
         df = df_heat_2()
@@ -66,6 +69,8 @@ def server(input, output, session):
                 muts=dict(width=800, height=800, keyify=True, call=(CALLS[0], CALLS[3]), comp=COMPONENTS, taxa=dict()),
             )
         )
+        for ele in ("agen", "pset", "temp"):
+            os.makedirs(PATH_RESULTS / user() / ele, exist_ok=True)
 
     @reactive.Effect
     def _():
@@ -88,40 +93,40 @@ def server(input, output, session):
 
     @render.data_frame
     def report_runs():
-        data = []
-        for ele in sorted(PATH_RESULTS.joinpath(user()).rglob("pset/*/*/*/assay.json")):
-            if ele.with_name("call.json").exists():
-                stat = ele.stat()
-                date = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
-                with ele.open() as file:
-                    obj = json.load(file)
-                    data.append(dict(zip(
-                        ("date", "batch", "db", "id", "type", "targets"),
-                        (date, ele.parts[-4], ele.parts[-3], ele.parts[-2], obj["type"], obj["targets"])
-                    )))
-        return render.DataTable(pd.DataFrame(data), selection_mode="rows", width="100%", filters=True)
+        return render.DataTable(pd.DataFrame(load_pset_runs(user())), selection_mode="rows", width="100%", filters=True)
+
+    @reactive.Effect
+    async def _():
+        if input.report_nav() == "output":
+            await report_runs.update_data(pd.DataFrame(load_pset_runs(user())))
 
     @reactive.Effect
     def _():
         ui.update_action_button("report_load", disabled=not report_runs.cell_selection()["rows"])
-        ui.update_action_button("report_save", disabled=not report_runs.cell_selection()["rows"])
+        ui.update_action_button("report_delete", disabled=not report_runs.cell_selection()["rows"])
 
-    @reactive.Effect
-    @reactive.event(input.report_save, ignore_init=True)
-    def _():
-        with ui.Progress(session=session) as prog:
+    @render.download(media_type="application/zip")
+    def report_save():
+        try:
+            root_tmp = PATH_RESULTS.absolute() / user() / "temp"
+            root_zip = root_tmp / "archive"
+            if root_zip.exists():
+                shutil.rmtree(root_zip)
+            os.makedirs(root_zip)
             df = df_conf()
             name = datetime.now().isoformat().replace(":", "_")
-            root = PATH_RESULTS / user() / "app"
-            os.makedirs(root, exist_ok=True)
-            prog.set(message="output confusion matrix...")
-            df.to_csv(root.joinpath(f"{name}_conf.tsv"), sep="\t")
+            df.to_csv(root_zip.joinpath(f"{name}_conf.tsv"), sep="\t")
             obj = plot_params()
             for key, plot_fn in zip(("heat", "muts"), (plot_heat, plot_muts)):
                 width, height = obj[key]["width"], obj[key]["height"]
-                prog.set(message=f"output {key} plot...")
-                for path in map(Path, plot_fn(width, height, exts=("png", "pdf"))):
-                    path.rename(root / path.with_stem(f"{name}_{key}").name)
+                try:
+                    for path in map(Path, plot_fn(width, height, exts=("png", "pdf"))):
+                        path.rename(root_zip / path.with_stem(f"{name}_{key}").name)
+                except:
+                    pass
+            return shutil.make_archive(root_tmp / "result", "zip", root_zip)
+        except:
+            return None
 
     @reactive.Effect
     @reactive.event(input.report_load, ignore_init=True)
@@ -192,6 +197,47 @@ def server(input, output, session):
                 plot_params.set(obj)
         else:
             ui.notification_show("no results to plot!")
+
+    @reactive.Effect
+    @reactive.event(input.report_delete, ignore_init=True)
+    def _():
+        paths = set(
+            (ele.batch, ele.db, ele.id)
+            for ele in report_runs.data().loc[list(report_runs.cell_selection()["rows"])].itertuples()
+        )
+        ui.modal_show(
+            ui.modal(
+                "Delete all of the following assay batch/DB results: ",
+                ui.br(),
+                *chain(((f"- {ele[0]}/{ele[1]}/{ele[2]}", ui.br()) for ele in paths)),
+                "?",
+                ui.hr(),
+                ui.input_action_button("run_delete", "Delete"),
+                title="Delete",
+                size="xl"
+            )
+        )
+    
+    @reactive.Effect
+    @reactive.event(input.run_delete, ignore_init=True)
+    async def run_delete():
+        paths = set(
+            PATH_RESULTS / user() / "pset" / Path(ele.batch, ele.db, ele.id)
+            for ele in report_runs.data().loc[list(report_runs.cell_selection()["rows"])].itertuples()
+        )
+
+        for ele in paths:
+            if ele.exists():
+                shutil.rmtree(ele)
+
+        for ele in set(ele.parent for ele in paths):
+            if not any(ele.is_dir() for ele in ele.iterdir()):
+                if ele.exists():
+                    shutil.rmtree(ele)
+
+        await report_runs.update_data(pd.DataFrame(load_pset_runs(user())))
+
+        ui.modal_remove()
 
     @reactive.Effect
     @reactive.event(input.report_plot_heat)
@@ -341,6 +387,8 @@ def server(input, output, session):
                 )
             cmd = (
                 "snakemake",
+                "--nolock",
+                "-d", str(Path(__file__).parent.parent),
                 "--forceall" * (input.forceall()),
                 "--rerun-incomplete",
                 "--cores",
@@ -354,7 +402,30 @@ def server(input, output, session):
                 "target_tsv",
             )
             cmd = list(filter(len, cmd))
-            monitor_snakemake(session, cmd, f"{Path(db).stem} > running")
+            # monitor_snakemake(session, cmd, f"{Path(db).stem} > running")            
+            task_submit(cmd, str(input.max_threads()))
+
+    @render.download(media_type="application/zip")
+    def report_download():
+        try:
+            root_tmp = PATH_RESULTS.absolute() / user() / "temp"
+            root_zip = root_tmp / "archive"
+            if root_zip.exists():
+                shutil.rmtree(root_zip)
+            os.makedirs(root_zip)
+
+            paths = set(
+                PATH_RESULTS / user() / "pset" / Path(ele.batch, ele.db, ele.id)
+                for ele in report_runs.data().loc[list(report_runs.cell_selection()["rows"])].itertuples()
+            )
+            if paths:
+                for path in paths:
+                    shutil.copytree(path, root_zip / path, dirs_exist_ok=True)
+
+                return shutil.make_archive(root_tmp / "result", "zip", root_zip)
+        except:
+            pass
+        return None
 
     @reactive.Effect
     @reactive.event(input.info_fasta)
@@ -374,11 +445,10 @@ def server(input, output, session):
         df = (
             pd.read_excel(path, names=["accession", "taxon"], dtype=str)
             if path.suffix == ".xlsx" else
-            pd.read_table(path, names=["accession", "taxon"], dtype=str, sep="\s+")
+            pd.read_table(path, names=["accession", "taxon"], dtype=str, sep="\\s+")
         )
-        pd.set_option("display.max_rows", None)
         with session_scope(sessionmaker(bind=create_engine(DBURL))) as curs:
-            df_right = pd.DataFrame([next(ancestors(curs, ele)) for ele in df["taxon"].unique()])
+            df_right = pd.DataFrame(chain.from_iterable(ancestors(curs, ele) for ele in df["taxon"].unique()))
             df_right.rename(columns=dict(tax_id="taxon", parent_tax_id="parent_taxon"), inplace=True)
             df_right["parent_taxon"] = df_right["parent_taxon"].astype(str)
             df_right["taxon"] = df_right["taxon"].astype(str)
@@ -387,11 +457,15 @@ def server(input, output, session):
 
     # @reactive.Effect
     @output
-    @render.table
+    @render.data_frame
     def result_mapping():
         df = df_sequences().merge(df_taxa(), on="accession", how="left")
         df_mapping.set(df)
-        return df
+        return render.DataTable(pd.DataFrame(df), width="100%")
+
+    @reactive.Effect
+    def _():
+        ui.update_action_button("run_build", disabled=not (len(df_mapping()) and input.db_title()))
 
     @reactive.Effect
     @reactive.event(input.run_build)
@@ -487,6 +561,8 @@ def server(input, output, session):
             return
         cmd = (
             "snakemake",
+            "--nolock",
+            "-d", str(Path(__file__).parent.parent),
             "--printshellcmds",
             "--cores",
             str(input.max_threads()),
@@ -499,9 +575,85 @@ def server(input, output, session):
             "--",
             "download",
         )
-        monitor_snakemake(session, cmd, f"{db} > running")
+        # monitor_snakemake(session, cmd, f"{db} > running")
+        task_submit(cmd, str(input.max_threads()))
         ui.update_select("database", choices=nucl_db_v5_choices(), session=session)
 
+    @reactive.Effect
+    @reactive.event(input.agen_fasta)
+    async def _():
+        info = input.agen_fasta()
+        if not info:
+            return
+        records = list(SeqIO.parse(info[0]["datapath"], "fasta"))
+        await agen_sequences.update_data(pd.DataFrame(dict(id=[ele.id for ele in records], length=list(map(len, records)))))
+    
+    @reactive.Effect
+    @reactive.event(input.agen_nav, input.pool_nav, ignore_init=True)
+    async def _():
+        await agen_assays.update_data(pd.DataFrame(load_agen_runs(user()).values()))
+
+    @render.data_frame
+    def agen_sequences():
+        return render.DataTable(pd.DataFrame(), width="100%", height="750px")
+
+    @render.data_frame
+    def agen_assays():
+        return render.DataTable(pd.DataFrame(load_agen_runs(user()).values()), width="100%", height="750px", selection_mode="rows")
+
+    @reactive.Effect
+    @reactive.event(input.agen_delete, ignore_init=True)
+    def _():
+        paths = [ele.batch / ele.target for ele in agen_assays.data().loc[list(agen_assays.cell_selection()["rows"])].itertuples()]
+        ui.modal_show(
+            ui.modal(
+                "Delete all of the following generated assays: ",
+                ui.br(),
+                *chain(((f"- {ele}", ui.br()) for ele in paths)),
+                "?",
+                ui.hr(),
+                ui.input_action_button("agen_run_delete", "Delete"),
+                title="Delete",
+                size="xl"
+            )
+        )
+    
+    @render.download(media_type="application/zip")
+    def agen_download():
+        try:
+            root_tmp = PATH_RESULTS.absolute() / user() / "temp"
+            root_zip = root_tmp / "archive"
+            if root_zip.exists():
+                shutil.rmtree(root_zip)
+            os.makedirs(root_zip)
+
+            paths = [ele.batch / ele.target for ele in agen_assays.data().loc[list(agen_assays.cell_selection()["rows"])].itertuples()]
+            if paths:
+                for path in paths:
+                    shutil.copytree(path, root_zip / path, dirs_exist_ok=True)
+                return shutil.make_archive(root_tmp / "result", "zip", root_zip)
+        except:
+            pass
+        return None
+    
+    @reactive.Effect
+    @reactive.event(input.agen_run_delete, ignore_init=True)
+    async def _():
+        paths = [ele.batch / ele.target for ele in agen_assays.data().loc[list(agen_assays.cell_selection()["rows"])].itertuples()]
+
+        for ele in paths:
+            if ele.exists():
+                shutil.rmtree(ele)
+        
+        for ele in set(ele.parent for ele in paths):
+            if not any(ele.is_dir() for ele in ele.iterdir()):
+                if ele.exists():
+                    shutil.rmtree(ele)
+
+        await agen_assays.update_data(pd.DataFrame(load_agen_runs(user()).values()))
+
+        ui.modal_remove()
+        
     @reactive.Effect
     @reactive.event(input.agen_run)
     def run_agen_workflow():
@@ -517,8 +669,8 @@ def server(input, output, session):
         path_config = path_out.joinpath("config.json")
         with path_config.open("w") as file:
             obj = dict(
-                file=info[0]["datapath"],
-                out=str(path_out),
+                file=str(Path(info[0]["datapath"]).absolute()),
+                out=str(path_out.absolute()),
                 mode=input.agen_mode(),
                 limit=input.agen_limit(),
             )
@@ -529,6 +681,8 @@ def server(input, output, session):
             json.dump(obj, fp=file, indent=True)
         cmd = (
             "snakemake",
+            "--nolock",
+            "-d", str(Path(__file__).parent.parent),
             "-s",
             "./workflow/rules/agen.smk",
             "--cores",
@@ -540,18 +694,39 @@ def server(input, output, session):
             "--",
             "target",
         )
-        monitor_snakemake(session, cmd)
+        # monitor_snakemake(session, cmd)
+        task_submit(cmd, str(input.agen_threads()))
 
-    @output(suspend_when_hidden=False)
-    @render.table
-    def agen_output():
-        dfs = []
-        for ele in agen_expected_output():
-            temp = pd.read_csv(ele, sep="\t")
-            if not temp.empty:
-                temp["subject"] = ele.parent.name
-                dfs.append(temp)
-        return pd.concat(dfs)
+    @reactive.Effect
+    @reactive.event(input.cancel_task, ignore_init=True)
+    def _():
+        conn = sqlite3.connect(DB_POOL)
+        conn.execute("UPDATE task SET status = 'DOCANCEL' WHERE id == ? AND user == ?;", (int(pool_id().id), user()))
+        conn.commit()
+        conn.close()
 
+    @reactive.Effect
+    def _():
+        if rows := pool.cell_selection()["rows"]:
+            pool_id.set(row := pool.data().iloc[rows])
+            if row.user == user():
+                ui.update_action_button("cancel_task", disabled=row.status not in ("QUEUED", "RUNNING"))
+    
+    @reactive.Effect
+    async def _():
+        await pool.update_data(df := task_poll().drop(["args", "log"], axis=1))
+        if not pool.cell_selection()["rows"]:
+            await pool.update_cell_selection({"type": "row", "rows": [int(df.loc[df.id == pool_id().id].index[0])]})
+
+    @render.data_frame
+    def pool():
+        return render.DataTable(task_read().drop(["args", "log"], axis=1), width="100%", selection_mode="row", height="750px")
+    
+    @reactive.Effect
+    def _():
+        df = task_poll()
+        ui.update_text_area("log", value = "")
+        if len(df := df.loc[(df.id == pool_id().id) & (df.user == user())]):
+            ui.update_text_area("log", value = df.log.iloc[0])
 
 app = App(app_ui, server)

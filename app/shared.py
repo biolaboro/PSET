@@ -1,17 +1,21 @@
 import os
 import json
+import sqlite3
 from math import ceil
 from string import ascii_uppercase
-from itertools import product
 from pathlib import Path
+from datetime import datetime
+from itertools import chain, product
 from collections import Counter, defaultdict
 from subprocess import PIPE, Popen, CalledProcessError
 
 import pandas as pd
 import networkx as nx
 from taxa.taxa import ancestors, descendants
-from shiny import ui
+from shiny import ui, reactive
 
+
+DB_POOL = Path(__file__).parent / "pool.sdb"
 CALLS = ("TP", "TN", "FP", "FN", "XX")
 COMPONENTS = ("F", "P", "R", "F3", "F2", "LF", "F1c", "B1c", "LB", "B2", "B3")
 BLAST_DIR = Path("resources") / "blast"
@@ -49,46 +53,18 @@ def add_key(df, col="id", key_name="key", key_values=ascii_uppercase):
     return df
 
 
-def read_func(path, read_func, *args, **kwargs):
-    """Wrapper function for pandas read_* methods...
+def autoscrollify(tag, **kwargs):
+    """Make Tag autoscroll on change...
 
     Args:
-        path (str): the file path
-        read_func (function): the read_* function
-        args: forwarded to the read_* function
-        kwargs: forwarded to the read_* function
-
+        tag: Tag
+    
     Returns:
-        pandas.DataFrame: the data frame
+        Tag
     """
-    try:
-        return read_func(path, *args, **kwargs)
-    except pd.errors.EmptyDataError:
-        return pd.DataFrame()
-
-
-def read_hits(path):
-    """Read hits from PSET call.json file as dictionaries.
-
-    Args:
-        path (str): the file
-
-    Yiels:
-        dict: the next hit result
-    """
-    keys = ("id", "com", "psim", "astr", "call", "acc")
-    with path.open() as file:
-        obj = json.load(file)
-        for nth, hit in enumerate(obj["hits"], start=1):
-            for com, val in hit["evals"].items():
-                for call, accs in hit["calls"].items():
-                    for acc in accs:
-                        yield dict(
-                            zip(keys, (obj["assay"]["id"], com, val["psim"], val["astr"], call, acc)),
-                            nth=nth,
-                            batch=path.parts[-4],
-                            db=path.parts[-3]
-                        )
+    # [0] = label, [1] = textares
+    tag.children[1].attrs["onchange"] = "this.scrollTop = this.scrollHeight;"
+    return tag
 
 
 def blastdb_taxidlist(db, taxa, outfmt="%T"):
@@ -111,6 +87,20 @@ def blastdb_taxidlist(db, taxa, outfmt="%T"):
                 yield from file
     except CalledProcessError:
         yield from ()
+
+
+def blastdbcmd_info():
+    """List available BLAST+ databases and metadata.
+    
+    Returns:
+        pd.DataFrame: the info
+    """
+    fields = "\t".join(("%f", "%p", "%t", "%d", "%l", "%n", "%U", "%v"))
+    cmd = ("blastdbcmd", "-recursive", "-remove_redundant_dbs", "-list", BLAST_DIR, "-list_outfmt", fields)
+    with Popen(cmd, stdout=PIPE, universal_newlines=True) as proc:
+        with proc.stdout as file:
+            data = pd.read_table(file, names=("path", "type", "title", "date", "bases", "sequences", "bytes", "version"))
+    return data
 
 
 def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
@@ -160,29 +150,27 @@ def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
     return C
 
 
-def blastdbcmd_info():
-    """List available BLAST+ databases and metadata.
-    
-    Returns:
-        pd.DataFrame: the info
-    """
-    fields = "\t".join(("%f", "%p", "%t", "%d", "%l", "%n", "%U", "%v"))
-    cmd = ("blastdbcmd", "-recursive", "-remove_redundant_dbs", "-list", BLAST_DIR, "-list_outfmt", fields)
-    with Popen(cmd, stdout=PIPE, universal_newlines=True) as proc:
-        with proc.stdout as file:
-            data = pd.read_table(file, names=("path", "type", "title", "date", "bases", "sequences", "bytes", "version"))
+def load_agen_runs(user):
+    paths = sorted(chain.from_iterable(PATH_RESULTS.joinpath(user).glob(f"agen/*/*/{ele}.json") for ele in ("PCR", "LAMP")))
+    assays = { ele.parent: dict(batch=ele.parent.parent, target=ele.parent.name, PCR=False, LAMP=False) for ele in paths}
+    for ele in paths:
+        assays[ele.parent][ele.name[:-5]] = True
+    return assays
+
+
+def load_pset_runs(user):
+    data = []
+    for ele in sorted(PATH_RESULTS.joinpath(user).glob("pset/*/*/*/assay.json")):
+        if ele.with_name("call.json").exists():
+            stat = ele.stat()
+            date = datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d")
+            with ele.open() as file:
+                obj = json.load(file)
+                data.append(dict(zip(
+                    ("date", "batch", "db", "id", "type", "targets"),
+                    (date, ele.parts[-4], ele.parts[-3], ele.parts[-2], obj["type"], obj["targets"])
+                )))
     return data
-
-
-def nucl_db_v5_choices():
-    """List available nucleotide BLAST+ v5 databases and metadata.
-    
-    Returns:
-        dict: the info
-    """
-    data = blastdbcmd_info()
-    data = data[(data["type"] == "Nucleotide") & (data["version"] == 5)]
-    return dict(zip(data["path"], data["title"]))
 
 
 def monitor_snakemake(session, cmd, msg=None):
@@ -199,6 +187,87 @@ def monitor_snakemake(session, cmd, msg=None):
             with proc.stderr as file:
                 for line in file:
                     line = line.strip()
-                    print(line)
                     if line.endswith("%) done"):
                         prog.set(message=msg, detail=line, value=float(line.split(" ")[-2][1:-2]))
+
+
+def nucl_db_v5_choices():
+    """List available nucleotide BLAST+ v5 databases and metadata.
+    
+    Returns:
+        dict: the info
+    """
+    data = blastdbcmd_info()
+    data = data[(data["type"] == "Nucleotide") & (data["version"] == 5)]
+    return dict(zip(data["path"], data["title"]))
+
+
+def read_func(path, read_func, *args, **kwargs):
+    """Wrapper function for pandas read_* methods...
+
+    Args:
+        path (str): the file path
+        read_func (function): the read_* function
+        args: forwarded to the read_* function
+        kwargs: forwarded to the read_* function
+
+    Returns:
+        pandas.DataFrame: the data frame
+    """
+    try:
+        return read_func(path, *args, **kwargs)
+    except pd.errors.EmptyDataError:
+        return pd.DataFrame()
+
+
+def read_hits(path):
+    """Read hits from PSET call.json file as dictionaries.
+
+    Args:
+        path (str): the file
+
+    Yiels:
+        dict: the next hit result
+    """
+    keys = ("id", "com", "psim", "astr", "call", "acc")
+    with path.open() as file:
+        obj = json.load(file)
+        for nth, hit in enumerate(obj["hits"], start=1):
+            for com, val in hit["evals"].items():
+                for call, accs in hit["calls"].items():
+                    for acc in accs:
+                        yield dict(
+                            zip(keys, (obj["assay"]["id"], com, val["psim"], val["astr"], call, acc)),
+                            nth=nth,
+                            batch=path.parts[-4],
+                            db=path.parts[-3]
+                        )
+
+
+def task_modified():
+    conn = sqlite3.connect(DB_POOL)
+    result = conn.execute("SELECT MAX(modified) FROM task;").fetchone()
+    conn.close()
+    return result
+
+
+@reactive.poll(task_modified, 1)
+def task_poll():
+    return task_read()
+
+
+def task_read():
+    conn = sqlite3.connect(DB_POOL)
+    df = pd.read_sql_query("SELECT * FROM task ORDER BY id DESC, submitted DESC", conn)
+    conn.close()
+    return df
+
+
+def task_submit(cmd, max_threads):
+    conn = sqlite3.connect(DB_POOL)
+    sql = "INSERT INTO task(user, args, cpu, status) VALUES (?, ?, ?, ?) RETURNING id;"
+    curs = conn.execute(sql, ("user", " ".join(cmd[1:]), max_threads, "QUEUED"))
+    ui.notification_show(f"Job ID {curs.fetchall()[0][0]} submitted!")
+    curs.close()
+    conn.commit()
+    conn.close()
