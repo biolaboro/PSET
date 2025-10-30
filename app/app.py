@@ -403,7 +403,7 @@ def server(input, output, session):
             )
             cmd = list(filter(len, cmd))
             # monitor_snakemake(session, cmd, f"{Path(db).stem} > running")            
-            task_submit(cmd, str(input.max_threads()))
+            task_submit(user(), cmd, str(input.max_threads()))
 
     @render.download(media_type="application/zip")
     def report_download():
@@ -576,7 +576,7 @@ def server(input, output, session):
             "download",
         )
         # monitor_snakemake(session, cmd, f"{db} > running")
-        task_submit(cmd, str(input.max_threads()))
+        task_submit(user(), cmd, str(input.max_threads()))
         ui.update_select("database", choices=nucl_db_v5_choices(), session=session)
 
     @reactive.Effect
@@ -695,7 +695,7 @@ def server(input, output, session):
             "target",
         )
         # monitor_snakemake(session, cmd)
-        task_submit(cmd, str(input.agen_threads()))
+        task_submit(user(), cmd, str(input.agen_threads()))
 
     @reactive.Effect
     @reactive.event(input.cancel_task, ignore_init=True)

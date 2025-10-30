@@ -263,10 +263,10 @@ def task_read():
     return df
 
 
-def task_submit(cmd, max_threads):
+def task_submit(user, cmd, max_threads):
     conn = sqlite3.connect(DB_POOL)
     sql = "INSERT INTO task(user, args, cpu, status) VALUES (?, ?, ?, ?) RETURNING id;"
-    curs = conn.execute(sql, ("user", " ".join(cmd[1:]), max_threads, "QUEUED"))
+    curs = conn.execute(sql, (user, " ".join(cmd[1:]), max_threads, "QUEUED"))
     ui.notification_show(f"Job ID {curs.fetchall()[0][0]} submitted!")
     curs.close()
     conn.commit()
