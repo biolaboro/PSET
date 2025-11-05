@@ -48,6 +48,7 @@ podman build -f docker/Dockerfile -t pset .
 
 Run the image:
 ```bash
+mkdir -p results && \ 
 podman run \
   -p 8000:8000 \
   -v "$(pwd)"/resources:/opt/resources \
