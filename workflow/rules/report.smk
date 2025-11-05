@@ -1,6 +1,3 @@
-report: base.parent / "README.rst"
-
-
 rule tab_alignments:
     message:
         "tabulate alignments: {wildcards.id}"

@@ -27,6 +27,41 @@ snakemake --cores 1 -s workflow/rules/setup.smk ebov
 
 ## Example: APP
 
+### Run Mode
+
+#### Container
+
+This is the recommended way to run the app.
+
+
+First install and setup [podman](https://podman.io/).
+```bash
+podman machine init
+podman machine set --cpus 4 --memory 4096
+podman machine start
+```
+
+Build the image:
+```bash
+podman build -f docker/Dockerfile -t pset .
+```
+
+Run the image:
+```bash
+podman run \
+  -p 8000:8000 \
+  -v "$(pwd)"/resources:/opt/resources \
+  -v "$(pwd)"/results:/opt/results \
+  -v "$(pwd)"/app:/opt/app \
+  --rm \
+  -it \
+  pset
+```
+
+Navigate to http://127.0.0.1:8000/.
+
+#### Manual
+
 Start the task pool server... The server will run the specified command based on the arguments submitted to the corresponding SQLite task database from the app.
 
 Run according to the help doc:
@@ -44,7 +79,7 @@ options:
   -h, --help  show this help message and exit
   -wd WD      the working directory for execution (default: ~/PSET)
   -db DB      the path to the SQLite database (default: ~/PSET/app/pool.sdb)
-  -cpu CPU    the maximum number of CPUs (default: 1)
+  -cpu CPU    the maximum number of CPUs (default: 16)
   -lag LAG    the event-loop lag in seconds (default: 1)
   -lim LIM    the maximum number of tasks per user (0 = unlimited) (default:
               1)

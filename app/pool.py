@@ -176,7 +176,7 @@ def parse_args(args):
     parser.add_argument("cmd", help="the command to execute")
     parser.add_argument("-wd", help="the working directory for execution", default=Path(__file__).parent.parent)
     parser.add_argument("-db", help="the path to the SQLite database", default=Path(__file__).parent / "pool.sdb")
-    parser.add_argument("-cpu", help="the maximum number of CPUs", type=int, default=1)
+    parser.add_argument("-cpu", help="the maximum number of CPUs", type=int, default=os.cpu_count())
     parser.add_argument("-lag", help="the event-loop lag in seconds", type=float, default=1)
     parser.add_argument("-lim", help="the maximum number of tasks per user (0 = unlimited)", type=int, default=1)
     parser.add_argument("-old", help="the max age of a task in the database (in days) (0 = unlimited)", type=int, default=30)
@@ -185,7 +185,7 @@ def parse_args(args):
 def main(argv):
     args = parse_args(argv[1:])
     print(args)
-    Pool(args.db, args.cmd, wd=args.wd, cpu=args.cpu, lag=args.lag, lim=args.lim, old=args.old).run()
+    Pool(args.db, args.cmd, wd=args.wd, cpu=min(args.cpu, os.cpu_count()), lag=args.lag, lim=args.lim, old=args.old).run()
     
 if __name__ == "__main__":
     main(sys.argv)

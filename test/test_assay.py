@@ -316,7 +316,8 @@ class Test(unittest.TestCase):
         self.assertEqual("".join(decode_btop("GATTACA", "5CN1")), "GATTAnA")
 
     def test_decode_btop_blastn(self):
-        queries = SeqIO.to_dict(SeqIO.parse(root.joinpath("qry.fasta"), "fasta"))
+        with root.joinpath("qry.fasta").open() as file:
+            queries = SeqIO.to_dict(SeqIO.parse(file, "fasta"))
         fields = ["qaccver", "saccver", "qstart", "qend", "qseq", "sseq", "length", "btop"]
         print()
         with root.joinpath("blastn.tsv").open() as file:
@@ -336,7 +337,8 @@ class Test(unittest.TestCase):
                         self.assertEqual("".join(decode_btop(qry, hsp.btop)).upper(), saln)
 
     def test_decode_btop_fasta36(self):
-        queries = SeqIO.to_dict(SeqIO.parse(root.joinpath("qry.fasta"), "fasta"))
+        with root.joinpath("qry.fasta").open() as file:
+            queries = SeqIO.to_dict(SeqIO.parse(file, "fasta"))
         hsp_getter = attrgetter("query_id", "hit_id", "query_start", "query_end", "hit_start", "hit_end")
         print()
         for prog in ("fasta", "glsearch"):

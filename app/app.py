@@ -47,7 +47,6 @@ def server(input, output, session):
         df = df_muts()
         with NamedTemporaryFile() as t1, NamedTemporaryFile() as t2:
             df.to_csv(t1.name, sep="\t", index=False)
-            df.to_csv("~/Desktop/df2.tsv", sep="\t", index=False)
             dims = (str(ele * DPI_PLOT / DPI_APP) for ele in (width, height))
             cmd = ("Rscript", Path(__file__).parent.resolve() / "muts.R", t1.name, t2.name, *dims, "px", str(DPI_PLOT), *exts)
             return check_output(cmd, universal_newlines=True).split("\n")
@@ -121,7 +120,7 @@ def server(input, output, session):
                 width, height = obj[key]["width"], obj[key]["height"]
                 try:
                     for path in map(Path, plot_fn(width, height, exts=("png", "pdf"))):
-                        path.rename(root_zip / path.with_stem(f"{name}_{key}").name)
+                        shutil.copyfile(path, root_zip / path.with_stem(f"{name}_{key}").name)
                 except:
                     pass
             return shutil.make_archive(root_tmp / "result", "zip", root_zip)

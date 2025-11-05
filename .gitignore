@@ -1,7 +1,6 @@
 workflow/envs/condaenv.*.requirements.txt
 pset.egg-info/
 out/
-results/
 ebola/
 dist/
 data/
@@ -10,12 +9,14 @@ __pycache__
 .vscode/.ropeproject
 *.tar.gz
 *.snakemake
+*.sqlite3
 *.sdb
 *.pyc
 *.perf
 *.nto
 *.ntf
 *.nal
+*.njs
 *.nsq
 *.not
 *.nos

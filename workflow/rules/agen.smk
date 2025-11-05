@@ -22,7 +22,8 @@ if "targets" in config:
     elif "," in str(config["targets"]):
         targets = dict(ele.split("=") for ele in config["targets"].split(","))
     else:
-        targets = { ele: config["targets"] for ele in accs }
+        targets = {ele: config["targets"] for ele in accs}
+
 
 rule split:
     input:

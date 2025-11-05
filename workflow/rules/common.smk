@@ -39,5 +39,5 @@ with open(config["file"]) as file:
             assays.append(rec)
     nprob = len(problems)
     w = len(str(len(assays) + nprob))
-    nprob and print(f"problems with {nprob} assay{'s' * (nprob - 1)}:", file=sys.stderr)
-    assays = { ele.id: ele for ele in assays }
+    nprob and print(f"problems with {nprob} assay{'s' *(nprob-1)}:", file=sys.stderr)
+    assays = {ele.id: ele for ele in assays}

@@ -20,7 +20,10 @@ from Bio.SeqRecord import SeqRecord
 from pset.util import iter_limit, iter_lines, sniff_lines
 
 # dict of DNA codes to unambiguous representations (case-insensitive): "A" -> "A", "N" -> "ACGT", ...
-amb = {**{key: "".join(sorted(val)) for key, val in dna_val.items()}, **{key.lower(): "".join(sorted(val)) for key, val in dna_val.items()}}
+amb = {
+    **{key: "".join(sorted(val)) for key, val in dna_val.items()},
+    **{key.lower(): "".join(sorted(val)) for key, val in dna_val.items()}
+}
 
 # set of canonical DNA codes
 dna = set("ACGTacgt")
@@ -546,7 +549,7 @@ def parse_assays(file, context=(0, 0), comment="#", sniff=True, target_type=str,
         context (tuple[int], optional): the amount of 5'/3'-context to include. Defaults to (0, 0).
         comment (str, optional): the comment line character. Defaults to "#".
         sniff (bool, optional): the flag to sniff the tabular file format dialect. Defaults to True.
-        target_type (func): the function that converts each target value. Defaults to int(val).
+        target_type (func): the function that converts each target value. Defaults to str.
 
     Yields:
         Assay: the next assay
@@ -612,7 +615,7 @@ def main(argv):
                 problems.append((idx, row))
             elif not ids or rec.id in ids:
                 assays.append(rec)
-    
+
     nprob = len(problems)
     w = len(str(len(assays) + nprob))
     nprob and print(f"problems with {nprob} assay{'s' * (nprob - 1)}:", file=sys.stderr)
