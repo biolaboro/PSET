@@ -1,7 +1,7 @@
-from shiny import ui
+#!/usr/bin/env python3
 
 from shared import *
-
+from shiny import ui
 
 app_ui = ui.page_fluid(
     ui.tags.style("#log { font-family: monospace; background-color: black; color: green; }"),

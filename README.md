@@ -33,7 +33,6 @@ snakemake --cores 1 -s workflow/rules/setup.smk ebov
 
 This is the recommended way to run the app.
 
-
 First install and setup [podman](https://podman.io/).
 ```bash
 podman machine init
@@ -41,22 +40,11 @@ podman machine set --cpus 4 --memory 4096
 podman machine start
 ```
 
-Build the image:
-```bash
-podman build -f docker/Dockerfile -t pset .
-```
-
-Run the image:
+Depending on the host OS, use `podman-compose` instead of `podman compose`...
+Build the images and run the services:
 ```bash
 mkdir -p results && \ 
-podman run \
-  -p 8000:8000 \
-  -v "$(pwd)"/resources:/opt/resources \
-  -v "$(pwd)"/results:/opt/results \
-  -v "$(pwd)"/app:/opt/app \
-  --rm \
-  -it \
-  pset
+podman compose -f docker/compose.yml up -d
 ```
 
 Navigate to http://127.0.0.1:8000/.

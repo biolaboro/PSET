@@ -1,22 +1,24 @@
-import os
+#!/usr/bin/env python3
+
 import json
+import os
 import shutil
-import sqlite3
+from datetime import datetime
+from itertools import chain
 from pathlib import Path
 from subprocess import check_call, check_output
-from itertools import chain
-from datetime import datetime
+from tempfile import NamedTemporaryFile
 
 import pandas as pd
-from tempfile import NamedTemporaryFile
 from Bio import SeqIO
+from shared import *
 from shiny import App, reactive, render, ui
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from taxa.taxa import ancestors, descendants, session_scope
-from pset.assay import AlignType, parse_assays
-from shared import *
 from ui import *
+
+from pset.assay import AlignType, parse_assays
 
 
 def server(input, output, session):
@@ -175,7 +177,7 @@ def server(input, output, session):
                         rows.append(dict(zip(
                             ("db", "tax", "sci", "rank", "genus", "genus_tax", "species"),
                             (ele["db"], ele["tax"], lineage[-1]["name_txt"], lineage[-1]["rank"], genus.get("name_txt", ""), genus.get("tax_id", ""), species.get("name_txt", "")
-                        ))))
+                             ))))
                     df_sci = pd.DataFrame(rows if rows else dict(db=pd.Series(dtype=str), tax=pd.Series(dtype=int), sci=pd.Series(dtype=str)))
 
                 prog.set(message="set confusion matrix...")
@@ -216,7 +218,7 @@ def server(input, output, session):
                 size="xl"
             )
         )
-    
+
     @reactive.Effect
     @reactive.event(input.run_delete, ignore_init=True)
     async def run_delete():
@@ -296,11 +298,11 @@ def server(input, output, session):
         df = df_conf()
         df = (
             df.
-              groupby(columns, group_keys=False, as_index=False, dropna=False, observed=True).
-              size().
-              pivot(index=columns[:-1], columns=columns[-1], values="size").reset_index().rename_axis(None, axis=1).
-              merge(df[["id", "key"]].drop_duplicates(), on=["id", "key"], how="left").
-              fillna(0)
+            groupby(columns, group_keys=False, as_index=False, dropna=False, observed=True).
+            size().
+            pivot(index=columns[:-1], columns=columns[-1], values="size").reset_index().rename_axis(None, axis=1).
+            merge(df[["id", "key"]].drop_duplicates(), on=["id", "key"], how="left").
+            fillna(0)
         )
         for ele in CALLS:
             if ele not in df:
@@ -357,15 +359,15 @@ def server(input, output, session):
         info = input.info()
         if not info:
             return
-        label = Path(info[0]["name"]).stem
-        path_out = PATH_RESULTS / user() / "pset" / label
-        os.makedirs(path_out, exist_ok=True)
         for _, db in enumerate(input.database(), start=1):
-            path_config = path_out.joinpath("config.json")
+            path_out = PATH_RESULTS.absolute() / user() / "pset" / Path(info[0]["name"]).stem
+            os.makedirs(path_out / Path(db).stem, exist_ok=True)
+            shutil.copy2(info[0]["datapath"], path_assay := path_out / Path(db).stem / "assay.tsv")
+            path_config = path_out / Path(db).stem / "config.json"
             with path_config.open("w") as file:
                 json.dump(
                     dict(
-                        file=info[0]["datapath"],
+                        file=str(path_assay),
                         db=db,
                         out=str(path_out),
                         flank=input.flank(),
@@ -401,7 +403,7 @@ def server(input, output, session):
                 "target_tsv",
             )
             cmd = list(filter(len, cmd))
-            # monitor_snakemake(session, cmd, f"{Path(db).stem} > running")            
+            # monitor_snakemake(session, cmd, f"{Path(db).stem} > running")
             task_submit(user(), cmd, str(input.max_threads()))
 
     @render.download(media_type="application/zip")
@@ -586,7 +588,7 @@ def server(input, output, session):
             return
         records = list(SeqIO.parse(info[0]["datapath"], "fasta"))
         await agen_sequences.update_data(pd.DataFrame(dict(id=[ele.id for ele in records], length=list(map(len, records)))))
-    
+
     @reactive.Effect
     @reactive.event(input.agen_nav, input.pool_nav, ignore_init=True)
     async def _():
@@ -616,7 +618,7 @@ def server(input, output, session):
                 size="xl"
             )
         )
-    
+
     @render.download(media_type="application/zip")
     def agen_download():
         try:
@@ -634,7 +636,7 @@ def server(input, output, session):
         except:
             pass
         return None
-    
+
     @reactive.Effect
     @reactive.event(input.agen_run_delete, ignore_init=True)
     async def _():
@@ -643,7 +645,7 @@ def server(input, output, session):
         for ele in paths:
             if ele.exists():
                 shutil.rmtree(ele)
-        
+
         for ele in set(ele.parent for ele in paths):
             if not any(ele.is_dir() for ele in ele.iterdir()):
                 if ele.exists():
@@ -652,7 +654,7 @@ def server(input, output, session):
         await agen_assays.update_data(pd.DataFrame(load_agen_runs(user()).values()))
 
         ui.modal_remove()
-        
+
     @reactive.Effect
     @reactive.event(input.agen_run)
     def run_agen_workflow():
@@ -660,16 +662,17 @@ def server(input, output, session):
         if not info:
             return
         label = Path(info[0]["name"]).stem
-        path_out = PATH_RESULTS / user() / "agen" / label
-        agen_expected_output.set(
-            [(path_out / ele.id / input.agen_mode()).with_suffix(".tsv") for ele in SeqIO.parse(info[0]["datapath"], "fasta")]
-        )
+        path_out = PATH_RESULTS.absolute() / user() / "agen" / label
         os.makedirs(path_out, exist_ok=True)
+        shutil.copy2(info[0]["datapath"], path_fna := path_out / "seq.fna")
+        agen_expected_output.set(
+            [(path_out / ele.id / input.agen_mode()).with_suffix(".tsv") for ele in SeqIO.parse(path_fna, "fasta")]
+        )
         path_config = path_out.joinpath("config.json")
         with path_config.open("w") as file:
             obj = dict(
-                file=str(Path(info[0]["datapath"]).absolute()),
-                out=str(path_out.absolute()),
+                file=str(path_fna),
+                out=str(path_out),
                 mode=input.agen_mode(),
                 limit=input.agen_limit(),
             )
@@ -699,10 +702,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.cancel_task, ignore_init=True)
     def _():
-        conn = sqlite3.connect(DB_POOL)
-        conn.execute("UPDATE task SET status = 'DOCANCEL' WHERE id == ? AND user == ?;", (int(pool_id().id), user()))
-        conn.commit()
-        conn.close()
+        task_cancel(int(pool_id().id), user())
 
     @reactive.Effect
     def _():
@@ -710,7 +710,7 @@ def server(input, output, session):
             pool_id.set(row := pool.data().iloc[rows])
             if row.user == user():
                 ui.update_action_button("cancel_task", disabled=row.status not in ("QUEUED", "RUNNING"))
-    
+
     @reactive.Effect
     async def _():
         await pool.update_data(df := task_poll().drop(["args", "log"], axis=1))
@@ -720,12 +720,13 @@ def server(input, output, session):
     @render.data_frame
     def pool():
         return render.DataTable(task_read().drop(["args", "log"], axis=1), width="100%", selection_mode="row", height="750px")
-    
+
     @reactive.Effect
     def _():
         df = task_poll()
-        ui.update_text_area("log", value = "")
+        ui.update_text_area("log", value="")
         if len(df := df.loc[(df.id == pool_id().id) & (df.user == user())]):
-            ui.update_text_area("log", value = df.log.iloc[0])
+            ui.update_text_area("log", value=df.log.iloc[0])
+
 
 app = App(app_ui, server)

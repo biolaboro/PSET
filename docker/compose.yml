@@ -1,0 +1,26 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile.app.yml
+    restart: no
+    volumes:
+      - ../app/:/opt/app
+      - ../pset/:/opt/pset
+      - ../resources/:/opt/resources
+      - ../results/:/opt/results
+      - ../workflow/:/opt/workflow
+    ports:
+      - 8000:8000
+
+  pool:
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile.pool.yml
+    restart: no
+    volumes:
+      - ../app/:/opt/app
+      - ../pset/:/opt/pset
+      - ../resources/:/opt/resources
+      - ../results/:/opt/results
+      - ../workflow/:/opt/workflow

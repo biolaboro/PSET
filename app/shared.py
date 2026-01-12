@@ -1,19 +1,20 @@
-import os
+#!/usr/bin/env python3
+
 import json
+import os
 import sqlite3
-from math import ceil
-from string import ascii_uppercase
-from pathlib import Path
+from collections import Counter, defaultdict
 from datetime import datetime
 from itertools import chain, product
-from collections import Counter, defaultdict
-from subprocess import PIPE, Popen, CalledProcessError
+from math import ceil
+from pathlib import Path
+from string import ascii_uppercase
+from subprocess import PIPE, CalledProcessError, Popen
 
-import pandas as pd
 import networkx as nx
+import pandas as pd
+from shiny import reactive, ui
 from taxa.taxa import ancestors, descendants
-from shiny import ui, reactive
-
 
 DB_POOL = Path(__file__).parent / "pool.sdb"
 CALLS = ("TP", "TN", "FP", "FN", "XX")
@@ -58,7 +59,7 @@ def autoscrollify(tag, **kwargs):
 
     Args:
         tag: Tag
-    
+
     Returns:
         Tag
     """
@@ -91,7 +92,7 @@ def blastdb_taxidlist(db, taxa, outfmt="%T"):
 
 def blastdbcmd_info():
     """List available BLAST+ databases and metadata.
-    
+
     Returns:
         pd.DataFrame: the info
     """
@@ -111,7 +112,7 @@ def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
         db: the BLAST+ database
         taxon: the taxonomy identifier
         near_neighbors: the flag to include near neibors
-    
+
     Return:
         Counter: the taxon counts
     """
@@ -152,7 +153,7 @@ def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
 
 def load_agen_runs(user):
     paths = sorted(chain.from_iterable(PATH_RESULTS.joinpath(user).glob(f"agen/*/*/{ele}.json") for ele in ("PCR", "LAMP")))
-    assays = { ele.parent: dict(batch=ele.parent.parent, target=ele.parent.name, PCR=False, LAMP=False) for ele in paths}
+    assays = {ele.parent: dict(batch=ele.parent.parent, target=ele.parent.name, PCR=False, LAMP=False) for ele in paths}
     for ele in paths:
         assays[ele.parent][ele.name[:-5]] = True
     return assays
@@ -175,7 +176,7 @@ def load_pset_runs(user):
 
 def monitor_snakemake(session, cmd, msg=None):
     """Run snakemake and monitor progress.
-    
+
     Args:
         session: the Shiny session
         cmd: the command tuple to run
@@ -193,7 +194,7 @@ def monitor_snakemake(session, cmd, msg=None):
 
 def nucl_db_v5_choices():
     """List available nucleotide BLAST+ v5 databases and metadata.
-    
+
     Returns:
         dict: the info
     """
@@ -242,6 +243,13 @@ def read_hits(path):
                             batch=path.parts[-4],
                             db=path.parts[-3]
                         )
+
+
+def task_cancel(id, user):
+    conn = sqlite3.connect(DB_POOL)
+    conn.execute("UPDATE task SET status = 'DOCANCEL' WHERE id == ? AND user == ?;", (id, user))
+    conn.commit()
+    conn.close()
 
 
 def task_modified():

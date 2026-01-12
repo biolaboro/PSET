@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 
 import os
-import sys
 import shlex
 import sqlite3
+import sys
 import time
-from tempfile import NamedTemporaryFile
-from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
 from collections import Counter, namedtuple
 from pathlib import Path
-from subprocess import Popen, STDOUT
+from subprocess import STDOUT, Popen
+from tempfile import NamedTemporaryFile
 
 
 class Pool():
@@ -45,7 +44,7 @@ class Pool():
         END;
         COMMIT;
     """
-    
+
     def __init__(self, db, cmd, wd, cpu=1, lag=1, lim=0, old=0):
         # args
         self.db, self.cmd, self.wd = db, cmd, wd
@@ -63,22 +62,22 @@ class Pool():
         # ensure table exists
         self.conn.executescript(self.SQL)
         # set all non-SUCCESS tasks to FAILURE
-        self.conn.executescript("UPDATE task SET status = 'UNKNOWN' WHERE status != 'SUCCESS';")
+        self.conn.execute("UPDATE task SET status = 'UNKNOWN' WHERE status NOT IN ('SUCCESS', 'FAILURE', 'CANCELED');")
         self.conn.commit()
 
     def _clean_task(self, ele, status):
-        ## process log
+        # process log
         if value := self.logs.get(ele.row.id):
             with open(value.name) as log:
                 sql = "UPDATE task SET status = :status, log = :log WHERE id == :id;"
                 self.conn.execute(sql, dict(status=status, id=ele.row.id, log=log.read()))
                 self.conn.commit()
-            ## remove completed log from pool
+            # remove completed log from pool
             os.unlink(log.name)
             del self.logs[ele.row.id]
-        ## wait (might not be necessary...)
+        # wait (might not be necessary...)
         ele.proc.wait()
-        ## remove completed task from pool
+        # remove completed task from pool
         if ele in self.pool:
             self.pool.remove(ele)
 
@@ -108,14 +107,14 @@ class Pool():
             if ele := completed.get(row.id):
                 status = "FAILURE" if ele.proc.returncode else "SUCCESS"
                 self._clean_task(ele, status)
-    
+
     def _process_running(self):
         """update status of running tasks"""
         for row in self.conn.execute("SELECT id, log FROM task WHERE status == 'RUNNING';").fetchall():
             with open(self.logs[row.id].name) as file:
                 self.conn.execute("UPDATE task SET log = :log WHERE id == :id", dict(log=file.read(), id=row.id))
                 self.conn.commit()
-    
+
     def _process_queued(self):
         """update status of queued tasks"""
         # get the next tasks
@@ -123,12 +122,12 @@ class Pool():
         for row in self.conn.execute(sql):
             running_users = Counter(ele.row.user for ele in self.running())
             if row.cpu <= self.available() and (self.lim == 0 or running_users[row.user] <= self.lim):
-                ## start process
+                # start process
                 self.logs[row.id] = (log := NamedTemporaryFile(prefix=f"pool-{row.id}_", suffix=f".log", delete=False, delete_on_close=False))
                 self.pool.add(self.Task(row, Popen((self.cmd, *shlex.split(row.args)), stdout=log, stderr=STDOUT, cwd=self.wd)))
-                ## set RUNNING
+                # set RUNNING
                 self.conn.execute("UPDATE task SET status = 'RUNNING' WHERE id == ?;", (row.id, ))
-            else:   
+            else:
                 self.conn.execute("UPDATE task SET modified = strftime('%Y-%m-%dT%H:%M:%S:%s', 'now', 'localtime') WHERE id == ?;", (row.id, ))
             self.conn.commit()
 
@@ -143,7 +142,7 @@ class Pool():
     def running(self):
         """yield the next Task that is running"""
         yield from (ele for ele in self.pool if ele.proc.poll() is None)
-    
+
     def status(self):
         return self.available(), self.cpu, list(self.conn.execute("SELECT * FROM TASK ORDER BY submitted;"))
 
@@ -171,7 +170,9 @@ class Pool():
             self.conn.close()
             time.sleep(self.lag)
 
+
 def parse_args(args):
+    from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser
     parser = ArgumentParser(description="submission system", formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument("cmd", help="the command to execute")
     parser.add_argument("-wd", help="the working directory for execution", default=Path(__file__).parent.parent)
@@ -182,10 +183,12 @@ def parse_args(args):
     parser.add_argument("-old", help="the max age of a task in the database (in days) (0 = unlimited)", type=int, default=30)
     return parser.parse_args(args)
 
+
 def main(argv):
     args = parse_args(argv[1:])
     print(args)
     Pool(args.db, args.cmd, wd=args.wd, cpu=min(args.cpu, os.cpu_count()), lag=args.lag, lim=args.lim, old=args.old).run()
-    
+
+
 if __name__ == "__main__":
     main(sys.argv)
