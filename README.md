@@ -44,6 +44,8 @@ Depending on the host OS, use `podman-compose` instead of `podman compose`...
 Build the images and run the services:
 ```bash
 mkdir -p results && \ 
+podman compose -f docker/compose.yml build pool && \
+podman compose -f docker/compose.yml build app && \
 podman compose -f docker/compose.yml up -d
 ```
 
