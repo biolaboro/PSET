@@ -5,6 +5,8 @@ ebola/
 dist/
 data/
 build/
+results/
+resources/blast
 __pycache__
 .vscode/.ropeproject
 *.tar.gz

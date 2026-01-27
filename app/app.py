@@ -564,6 +564,7 @@ def server(input, output, session):
             "snakemake",
             "--nolock",
             "-d", str(Path(__file__).parent.parent),
+            "--forceall" * (input.update_db()),
             "--printshellcmds",
             "--cores",
             str(input.max_threads()),
@@ -726,7 +727,8 @@ def server(input, output, session):
         df = task_poll()
         ui.update_text_area("log", value="")
         if len(df := df.loc[(df.id == pool_id().id) & (df.user == user())]):
-            ui.update_text_area("log", value=df.log.iloc[0])
+            value = (line for line in df.log.iloc[0].split("\n") if "SyntaxWarning: invalid escape sequence '\('" not in line)
+            ui.update_text_area("log", value="\n".join(value))
 
 
 app = App(app_ui, server)

@@ -14,6 +14,7 @@ from subprocess import PIPE, CalledProcessError, Popen
 import networkx as nx
 import pandas as pd
 from shiny import reactive, ui
+from sqlalchemy.sql import text
 from taxa.taxa import ancestors, descendants
 
 DB_POOL = Path(__file__).parent / "pool.sdb"
@@ -121,10 +122,13 @@ def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
     infos = [
         (
             *curs.execute(
-                "SELECT id, name_class FROM tax_name WHERE tax_id == :tax_id AND name_class == 'scientific name';",
+                text("SELECT id, name_class FROM tax_name WHERE tax_id == :tax_id AND name_class == 'scientific name';"),
                 dict(tax_id=ele["tax_id"])
             ).fetchone(),
-            curs.execute("SELECT rank FROM tax_node WHERE tax_id == :tax_id;", dict(tax_id=ele["tax_id"])).fetchone()[0]
+            curs.execute(
+                text("SELECT rank FROM tax_node WHERE tax_id == :tax_id;"),
+                dict(tax_id=ele["tax_id"])
+            ).fetchone()[0]
         )
         for ele in lineage
     ]

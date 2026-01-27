@@ -61,26 +61,15 @@ if config.get("db"):
         message:
             """download BLAST+ database from NCBI..."""
         output:
-            log=root / "blast" / config["db"] / f"{config['db']}.log",
+            log=root / "blast" / config["db"] / f"{config['db']}.stdout.log",
+        log:
+            log=root / "blast" / config["db"] / f"{config['db']}.stderr.log",
         params:
             db=config["db"],
-            decompress=config.get("decompress", ""),
-            source=config.get("source", "ncbi"),
             out=root / "blast" / config["db"],
+            script=Path(workflow.basedir).parent / "scripts" / "util" / "dbdl.sh",
         threads: 4
         shell:
             """
-            decompress={params.decompress:q}
-            mkdir -p {params.out:q} && \
-            cd {params.out:q} || exit 1 && \
-            update_blastdb.pl \
-                --source {params.source:q} \
-                "${{decompress:+--decompress}}" \
-                --num_threads {threads} \
-                {params.db:q} | \
-                tee {output.log:q}
-            # in case complete decompress fails for some reason or the flag wasn't added
-            # this is known when the tar.gz files remain
-            find . -name "*.tar.gz" -type f | xargs -L 1 -P {threads} -- tar --keep-newer-files -x -f
-            find . -name "*.tar.gz" -type f -exec rm {{}} \;
+            bash -x {params.script:q} {params.db:q} {params.out:q} {threads:q} > {output.log:q} 2> {log.log:q}
             """

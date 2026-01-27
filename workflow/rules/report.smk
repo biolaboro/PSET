@@ -59,7 +59,7 @@ rule plot_report:
         log=root / "report.log",
     params:
         script=base.absolute() / "scripts" / "report" / "plot.Rmd",
-    threads: 8
+    threads: 1
     shell:
         """
         Rscript \

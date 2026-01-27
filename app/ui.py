@@ -142,6 +142,7 @@ app_ui = ui.page_fluid(
                     ui.input_action_button("run_database_listing", "⓵ download listing"),
                     ui.input_select("select_db", "Select BLAST+ Database", choices=[], selected=""),
                     ui.input_action_button("run_database_download", "⓶ download database", enabled=False),
+                    ui.input_switch("update_db", "update database", value=False),
                     width="400px",
                 ),
                 ui.output_data_frame("remote_databases"),
