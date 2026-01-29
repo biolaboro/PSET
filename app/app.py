@@ -151,22 +151,21 @@ def server(input, output, session):
                 prog.set(message="record max component length...")
                 max_comp_len.set(max(map(len, df_hits.astr)))
 
-                prog.set(message="calculate subject taxonomy counts...")
+                prog.set(message="load subject taxonomy counts...")
                 df_conf_temp = df_hits.drop(columns=["com", "psim", "astr"]).drop_duplicates()
-                df_taxa = (
-                    pd.DataFrame(
-                        (
-                            (db, *ele.split("\t")) for db in df_conf_temp.db.unique()
-                            for ele in blastdb_taxidlist(BLAST_DIR / db / db, df_conf_temp.tax)
-                        ),
-                        columns=(columns := ["db", "tax"])
-                    ).
-                    astype(dict(tax="Int64")).
-                    groupby(columns, observed=True).
-                    size().
-                    reset_index(name="count")
-                )
-                df_taxa = pd.concat((df_taxa, df_conf_temp[columns])).drop_duplicates(subset=["db", "tax"], keep="first")
+                tax_paths = set(path.parent.with_name("tax.tsv") for path in paths)
+                df_taxa = pd.DataFrame(columns := ["db", "tax"])
+                if all((path.exists() for path in tax_paths)):
+                    # taxon counts exist, otherwise the results are from a previous version...
+                    frames = []
+                    for path in tax_paths:
+                        df = pd.read_table(path)
+                        df["db"] = path.parent.name
+                        frames.append(df)
+                    df_taxa = pd.concat(frames)
+                    df_taxa = df_taxa[df_taxa["tax"].isin(df_conf_temp["tax"])]
+                df_taxa = pd.concat((df_taxa, df_conf_temp[columns])).drop_duplicates(subset=columns, keep="first")
+
                 prog.set(message="query scientific names...")
                 with session_scope(sessionmaker(bind=create_engine(DBURL))) as curs:
                     rows = []
@@ -174,9 +173,10 @@ def server(input, output, session):
                         lineage = ancestors(curs, ele["tax"])
                         genus = next((ele for ele in lineage if ele["rank"] == "genus"), {})
                         species = next((ele for ele in lineage if ele["rank"] == "species"), {})
+                        last = lineage[-1] if lineage else {}
                         rows.append(dict(zip(
                             ("db", "tax", "sci", "rank", "genus", "genus_tax", "species"),
-                            (ele["db"], ele["tax"], lineage[-1]["name_txt"], lineage[-1]["rank"], genus.get("name_txt", ""), genus.get("tax_id", ""), species.get("name_txt", "")
+                            (ele["db"], ele["tax"], last.get("name_txt", "?"), last.get("rank", "?"), genus.get("name_txt", "?"), genus.get("tax_id", "?"), species.get("name_txt", "?")
                              ))))
                     df_sci = pd.DataFrame(rows if rows else dict(db=pd.Series(dtype=str), tax=pd.Series(dtype=int), sci=pd.Series(dtype=str)))
 
@@ -186,11 +186,13 @@ def server(input, output, session):
                 prog.set(message="set taxa dropdowns...")
                 choices = defaultdict(dict)
                 for ele in rows:
-                    parens = f" ({val})" if (val := ele["genus_tax"]) else ""
-                    key = (val + parens) if (val := ele["genus"]) else "?"
-                    val = (val + " (" + str(ele["tax"]) + ")") if (val := ele["sci"]) else ele["tax"]
-                    choices[key][ele["tax"]] = val
+                    if not pd.isna(ele["db"]) and not pd.isna(ele["tax"]):
+                        parens = f" ({val})" if (val := ele["genus_tax"]) else ""
+                        key = (val + parens) if (val := ele["genus"]) else "?"
+                        val = (val + " (" + str(ele["tax"]) + ")") if (val := ele["sci"]) else ele["tax"]
+                        choices[key][ele["tax"]] = val
                 selected = list(chain.from_iterable(choices.values()))
+
                 ui.update_select(f"report_taxa", choices=choices, selected=selected, session=session)
                 obj = plot_params()
                 obj["heat"]["taxa"] = selected
@@ -294,8 +296,12 @@ def server(input, output, session):
 
     @render.data_frame
     def report_confusion():
-        columns = ["id", "key", *input.report_aggregate(), "call"]
+        report_aggregate = list(input.report_aggregate())
+        columns = ["id", "key", *report_aggregate, "call"]
         df = df_conf()
+        if "count" in report_aggregate and "count" not in df:
+            columns.remove("count")
+            report_aggregate.remove("count")
         df = (
             df.
             groupby(columns, group_keys=False, as_index=False, dropna=False, observed=True).
@@ -307,7 +313,7 @@ def server(input, output, session):
         for ele in CALLS:
             if ele not in df:
                 df[ele] = 0
-        df = df[["id", "key", *input.report_aggregate(), *CALLS]]
+        df = df[["id", "key", *report_aggregate, *CALLS]]
         return render.DataTable(df, width="100%")
 
     @render.image(delete_file=True)
@@ -727,7 +733,7 @@ def server(input, output, session):
         df = task_poll()
         ui.update_text_area("log", value="")
         if len(df := df.loc[(df.id == pool_id().id) & (df.user == user())]):
-            value = (line for line in df.log.iloc[0].split("\n") if "SyntaxWarning: invalid escape sequence '\('" not in line)
+            value = (line for line in df.log.iloc[0].split("\n") if "SyntaxWarning: invalid escape sequence '\\('" not in line)
             ui.update_text_area("log", value="\n".join(value))
 
 
