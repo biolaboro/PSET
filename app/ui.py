@@ -92,11 +92,12 @@ app_ui = ui.page_fluid(
                                 "tables",
                                 ui.input_checkbox_group(
                                     "report_aggregate",
-                                    "aggregate by assay id, including",
+                                    "aggregate by assay id, including:",
                                     choices=CONFUSION_AGGREGATE_KEYS,
                                     selected=CONFUSION_AGGREGATE_KEYS[1],
                                     inline=True
                                 ),
+                                ui.input_switch("remove_unk", "Remove hits with N's/X's:", value=True, width=100),
                                 ui.output_data_frame("report_confusion"),
                             ),
                             ui.nav_panel(
@@ -126,13 +127,24 @@ app_ui = ui.page_fluid(
                     "The mapping file must not contain column names. "
                     "The first column of the mapping file is the accession and the second is the taxon identifier. ",
                     "If the mapping file is an Excel file, then the first sheet is assumed.",
-                    ui.input_file("info_fasta", "DNA sequences (FASTA)"),
-                    ui.input_file("info_taxon", "accession-taxon mapping"),
+                    ui.input_file("info_seq", "DNA sequence files (FASTA/GenBank)", multiple=True, accept=(".fasta", ".fas", ".fna", ".gbk", ".gbf", ".gbff", ".genbank")),
+                    ui.input_radio_buttons("tax_mode", "taxonomy mode", choices=("map", "global"), inline=True),
+                    ui.input_file("info_map", "map: accession-taxonomy mapping file"),
+                    ui.input_numeric("info_tax", "global: taxonomy id", value=1, min=1),
                     ui.input_text("db_title", "title"),
                     ui.input_action_button("run_build", "build", disabled=True),
                     width="400px",
                 ),
-                ui.output_data_frame("result_mapping"),
+                ui.navset_card_pill(
+                    ui.nav_panel("input", ui.output_data_frame("file_status")),
+                    ui.nav_panel(
+                        "output", 
+                        ui.input_action_button("custom_delete", "delete"),
+                        ui.hr(),
+                        ui.output_data_frame("database_table_user")
+                    ),
+                    id="custom_nav"
+                )
             ),
         ),
         ui.nav_panel(

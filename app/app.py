@@ -3,10 +3,11 @@
 import json
 import os
 import shutil
+from collections import Counter
 from datetime import datetime
 from itertools import chain
 from pathlib import Path
-from subprocess import check_call, check_output
+from subprocess import check_output
 from tempfile import NamedTemporaryFile
 
 import pandas as pd
@@ -31,9 +32,8 @@ def server(input, output, session):
     df_muts = reactive.Value()
     df_local_db = reactive.Value()
     df_remote_db = reactive.Value()
-    df_taxa = reactive.Value()
-    df_sequences = reactive.Value()
-    df_mapping = reactive.Value()
+    df_map = reactive.Value()
+    acc = reactive.Value()
     plot_params = reactive.Value()
     pool_id = reactive.Value()
 
@@ -54,15 +54,19 @@ def server(input, output, session):
             return check_output(cmd, universal_newlines=True).split("\n")
 
     @reactive.Effect
+    @reactive.event(input.report_nav, input.custom_nav, ignore_init=True)
+    def _():
+        df_local_db.set(blastdbcmd_info_user(user()))
+
+    @reactive.Effect
     def _():
         # headers
         user.set(session.http_conn.headers.get(USER_KEY, USER_DEFAULT))
         # populate local databases
-        choices = nucl_db_v5_choices()
-        ui.update_select("database", choices=choices, session=session)
+        data = blastdbcmd_info_user(user())
+        df_local_db.set(data)
+        ui.update_select("database", choices=(choices := dict(zip(data.path, data.title))), session=session)
         ui.update_select("taxa_blastdb", choices=choices, session=session)
-        data = blastdbcmd_info()
-        df_local_db.set(data[(data["type"] == "Nucleotide") & (data["version"] == 5)].iloc[:, 2:-1])
         # plot parameters
         plot_params.set(
             dict(
@@ -130,13 +134,17 @@ def server(input, output, session):
             return None
 
     @reactive.Effect
-    @reactive.event(input.report_load, ignore_init=True)
+    @reactive.event(input.report_load, input.remove_unk, ignore_init=True)
     def _():
         paths = [
             PATH_RESULTS / user() / "pset" / Path(ele.batch, ele.db, ele.id, "call.json")
             for ele in report_runs.data().loc[list(report_runs.cell_selection()["rows"])].itertuples()
         ]
         df_hits = pd.DataFrame(chain.from_iterable(map(read_hits, paths)))
+
+        if len(df_hits) and input.remove_unk():
+            df_hits = df_hits[df_hits["astr"].str.contains(str(AlignType.UNK.value)) == False]
+
         if len(df_hits):
             with ui.Progress(session=session) as prog:
                 prog.set(message="load assay hits...")
@@ -333,8 +341,7 @@ def server(input, output, session):
     @output(suspend_when_hidden=False)
     @render.data_frame
     def assay_table():
-        info = input.info()
-        if not info:
+        if not (info := input.info()):
             return
         with open(info[0]["datapath"]) as file:
             data = []
@@ -350,20 +357,59 @@ def server(input, output, session):
             ui.notification_show(
                 f"Found {nprob} assay problem{'s' * (nprob > 1)}, check the 'ok' column..."
                 if nprob else
-                f"Loaded {len(data)} assay{'s' * (len(data) > 1)}!"
+                f"Loaded {len(data)} assay{'s' * (len(data) > 1)}!",
+                type="error"
             )
             return render.DataTable(pd.DataFrame(data), width="100%", filters=True)
 
     @output(suspend_when_hidden=False)
     @render.data_frame
     def database_table():
-        return render.DataTable(df_local_db(), width="100%")
+        return render.DataTable(df_local_db().iloc[:, 2:-1], width="100%")
+    
+    @output(suspend_when_hidden=False)
+    @render.data_frame
+    def database_table_user():
+        data = df_local_db()
+        indexes = [idx for idx, ele in enumerate(map(Path, data.path)) if not (len(ele.parts) == 5 and ele.parts[2] == user())]
+        data.drop(data.index[indexes], inplace=True)
+        return render.DataTable(data, width="100%", selection_mode="rows")
+
+    @reactive.Effect
+    @reactive.event(input.custom_delete, ignore_init=True)
+    def _():
+        data = database_table_user.data()
+        rows = list(database_table_user.cell_selection()["rows"])
+        paths = data.path.iloc[rows].tolist()
+        ui.modal_show(
+            ui.modal(
+                "Delete all of the following custom BLAST+ databases: ",
+                ui.br(),
+                *chain(((f"- {ele}", ui.br()) for ele in paths)),
+                "?",
+                ui.hr(),
+                ui.input_action_button("custom_run_delete", "Delete"),
+                title="Delete",
+                size="xl"
+            )
+        )
+
+    @reactive.Effect
+    @reactive.event(input.custom_run_delete, ignore_init=True)
+    async def _():
+        data = database_table_user.data()
+        rows = list(database_table_user.cell_selection()["rows"])
+        paths = data.path.iloc[rows].tolist()
+        for ele in paths:
+            shutil.rmtree(Path(ele).parent)
+        ui.modal_remove()
+        df_local_db.set(blastdbcmd_info_user(user()))
+
 
     @reactive.Effect
     @reactive.event(input.run_pset)
     def run_pset_workflow():
-        info = input.info()
-        if not info:
+        if not (info := input.info()):
             return
         for _, db in enumerate(input.database(), start=1):
             path_out = PATH_RESULTS.absolute() / user() / "pset" / Path(info[0]["name"]).stem
@@ -409,7 +455,6 @@ def server(input, output, session):
                 "target_tsv",
             )
             cmd = list(filter(len, cmd))
-            # monitor_snakemake(session, cmd, f"{Path(db).stem} > running")
             task_submit(user(), cmd, str(input.max_threads()))
 
     @render.download(media_type="application/zip")
@@ -435,91 +480,85 @@ def server(input, output, session):
         return None
 
     @reactive.Effect
-    @reactive.event(input.info_fasta)
-    def load_fasta():
-        info = input.info_fasta()
-        if not info:
-            return
-        df_sequences.set(pd.DataFrame(dict(accession=[ele.id for ele in SeqIO.parse(info[0]["datapath"], "fasta")])))
+    def _():
+        counts = acc()
+        if (duplicates := not (counts and all(ele == 1 for ele in counts.values()))):
+            ui.notification_show("duplicate accessions detected!", type="error")
+        disabled = not (input.db_title() and not duplicates)
+        if input.tax_mode() == "map":
+            df = pd.DataFrame(dict(acc=list(counts))).merge(df_map(), how="left", on="acc")
+            if (missing := bool(df.tax.isnull().any())):
+                ui.notification_show("missing taxonomy identifiers!", type="error")
+            disabled = disabled or missing
+        ui.update_action_button("run_build", disabled=disabled)
 
     @reactive.Effect
-    @reactive.event(input.info_taxon)
-    def load_mapping():
-        info = input.info_taxon()
-        if not info:
+    @reactive.event(input.info_map)
+    def _():
+        if not (info := input.info_map()):
             return
         path = Path(info[0]["datapath"])
-        df = (
-            pd.read_excel(path, names=["accession", "taxon"], dtype=str)
-            if path.suffix == ".xlsx" else
-            pd.read_table(path, names=["accession", "taxon"], dtype=str, sep="\\s+")
-        )
-        with session_scope(sessionmaker(bind=create_engine(DBURL))) as curs:
-            df_right = pd.DataFrame(chain.from_iterable(ancestors(curs, ele) for ele in df["taxon"].unique()))
-            df_right.rename(columns=dict(tax_id="taxon", parent_tax_id="parent_taxon"), inplace=True)
-            df_right["parent_taxon"] = df_right["parent_taxon"].astype(str)
-            df_right["taxon"] = df_right["taxon"].astype(str)
-            df = df.merge(df_right, on="taxon", how="left")
-            df_taxa.set(df)
+        names = ["acc", "tax"]
+        df_map.set(pd.read_table(path, sep="\\s+", header=None, names=names))
 
-    # @reactive.Effect
-    @output
     @render.data_frame
-    def result_mapping():
-        df = df_sequences().merge(df_taxa(), on="accession", how="left")
-        df_mapping.set(df)
-        return render.DataTable(pd.DataFrame(df), width="100%")
-
-    @reactive.Effect
-    def _():
-        ui.update_action_button("run_build", disabled=not (len(df_mapping()) and input.db_title()))
+    @reactive.event(input.info_seq)
+    def file_status():
+        if not (info := input.info_seq()):
+            return
+        counts = Counter()
+        dfs = []
+        for ele in info:
+            try:
+                fmt = "fasta" if Path(ele["name"]).suffix.startswith(".f") else "genbank"
+                df = pd.DataFrame([dict(name=ele["name"], acc=record.id) for record in SeqIO.parse(ele["datapath"], fmt)])
+                counts.update(df["acc"])
+                ok = df.groupby(["acc"]).size().reset_index(name="n").n.eq(1).all()
+                df = df.groupby(["name"]).size().reset_index(name="n")
+                df["size"] = ele["size"]
+                df["ok"] = ok
+                dfs.append(df)
+            except:
+                dfs.append(pd.DataFrame(dict(name=ele["name"], n=0, size=ele["size"], ok=False)))
+        acc.set(counts)
+        return render.DataTable(pd.concat(dfs), width="100%")
 
     @reactive.Effect
     @reactive.event(input.run_build)
     def run_build():
-        title = input.db_title()
-        path_dir = BLAST_DIR.joinpath(title)
-        df = df_mapping()
-        if df["taxon"].isnull().any():
-            modal = ui.modal(
-                "Accession(s) missing taxon identifiers!",
-                title="Error",
-                easy_close=True,
-                footer=None,
-            )
+        if not (info := input.info_seq()):
+            return
+        path_out = BLAST_DIR / user() / input.db_title()
+        os.makedirs(path_out, exist_ok=True)
+        path_seq = path_out / "seq.fna"
+        with path_seq.open("w") as file:
+            for ele in info:
+                fmt = "fasta" if Path(ele["name"]).suffix.startswith(".f") else "genbank"
+                SeqIO.write(SeqIO.parse(ele["datapath"], fmt), file, "fasta")
+        if input.tax_mode() == "map":
+            df = pd.DataFrame(dict(acc=list(acc()))).merge(df_map(), how="left", on="acc")
+            df.to_csv(path_map := path_seq.with_suffix(".ssv"), sep=" ", header=None, index=False)
+            flag = f"taxid_map={path_map}"
         else:
-            os.makedirs(path_dir, exist_ok=True)
-            path_map = path_dir.joinpath(title).with_suffix(".ssv")
-            with path_map.open("w") as file:
-                df.to_csv(file, sep=" ", columns=["accession", "taxon"], header=False, index=False)
-            cmd = (
-                "makeblastdb",
-                "-in", input.info_fasta()[0]["datapath"],
-                "-input_type", "fasta",
-                "-dbtype", "nucl",
-                "-title", title,
-                "-parse_seqids",
-                "-hash_index",
-                "-out", str(path_dir.joinpath(title)),
-                "-blastdb_version", "5",
-                "-logfile", str(path_dir.joinpath(title).with_suffix(".log")),
-                "-taxid_map", str(path_map)
-            )
-            with ui.Progress(session=session) as prog:
-                prog.set(message=f"building {title} BLAST+ database...")
-                check_call(cmd)
-                prog.set(message="getting info...")
-
-            modal = ui.modal(
-                f"Database '{title}' built!",
-                title="Complete",
-                easy_close=True,
-                footer=None,
-            )
-            ui.update_select("database", choices=nucl_db_v5_choices(), session=session)
-            data = blastdbcmd_info()
-            df_local_db.set(data[(data["type"] == "Nucleotide") & (data["version"] == 5)].iloc[:, 2:-1])
-        ui.modal_show(modal)
+            flag = f"taxid={input.info_tax()}"
+        cmd = (
+            "snakemake",
+            "--nolock",
+            "-d", str(Path(__file__).parent.parent),
+            "--printshellcmds",
+            "--cores",
+            "1",
+            "-s",
+            "workflow/rules/makebdb.smk",
+            "--config",
+            f"path={path_seq}",
+            f"root={path_out}",
+            f"title={input.db_title()}",
+            flag,
+            "--",
+            "makeblastdb",
+        )
+        task_submit(user(), cmd, str(input.max_threads()))
 
     @output(suspend_when_hidden=False)
     @render.data_frame
@@ -583,15 +622,12 @@ def server(input, output, session):
             "--",
             "download",
         )
-        # monitor_snakemake(session, cmd, f"{db} > running")
         task_submit(user(), cmd, str(input.max_threads()))
-        ui.update_select("database", choices=nucl_db_v5_choices(), session=session)
 
     @reactive.Effect
     @reactive.event(input.agen_fasta)
     async def _():
-        info = input.agen_fasta()
-        if not info:
+        if not (info := input.agen_fasta()):
             return
         records = list(SeqIO.parse(info[0]["datapath"], "fasta"))
         await agen_sequences.update_data(pd.DataFrame(dict(id=[ele.id for ele in records], length=list(map(len, records)))))
@@ -665,8 +701,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.agen_run)
     def run_agen_workflow():
-        info = input.agen_fasta()
-        if not info:
+        if not (info := input.agen_fasta()):
             return
         label = Path(info[0]["name"]).stem
         path_out = PATH_RESULTS.absolute() / user() / "agen" / label
@@ -703,7 +738,6 @@ def server(input, output, session):
             "--",
             "target",
         )
-        # monitor_snakemake(session, cmd)
         task_submit(user(), cmd, str(input.agen_threads()))
 
     @reactive.Effect

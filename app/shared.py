@@ -105,6 +105,14 @@ def blastdbcmd_info():
     return data
 
 
+def blastdbcmd_info_user(user):
+    data = blastdbcmd_info()
+    data = data[(data["type"] == "Nucleotide") & (data["version"] == 5)]
+    indexes = [idx for idx, ele in enumerate(map(Path, data.path)) if not (len(ele.parts) == 4 or (len(ele.parts) == 5 and ele.parts[2] == user))]
+    data.drop(data.index[indexes], inplace=True)
+    return data
+
+
 def count_nntaxa_in_blastdb(curs, db, taxon, near_neighbors=True):
     """Count the taxon and its relatives in the BLAST+ database.
 
@@ -194,17 +202,6 @@ def monitor_snakemake(session, cmd, msg=None):
                     line = line.strip()
                     if line.endswith("%) done"):
                         prog.set(message=msg, detail=line, value=float(line.split(" ")[-2][1:-2]))
-
-
-def nucl_db_v5_choices():
-    """List available nucleotide BLAST+ v5 databases and metadata.
-
-    Returns:
-        dict: the info
-    """
-    data = blastdbcmd_info()
-    data = data[(data["type"] == "Nucleotide") & (data["version"] == 5)]
-    return dict(zip(data["path"], data["title"]))
 
 
 def read_func(path, read_func, *args, **kwargs):
