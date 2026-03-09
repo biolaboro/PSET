@@ -3,7 +3,7 @@
 import json
 import sys
 from argparse import ArgumentDefaultsHelpFormatter, ArgumentParser, FileType
-from collections import defaultdict
+from collections import Counter, defaultdict
 from itertools import product
 from multiprocessing import Pool
 from operator import itemgetter
@@ -16,6 +16,10 @@ from Bio.SeqRecord import SeqRecord
 from pset.assay import LAMP, PCR, Assay, amb
 
 DEFAULT_PRIMER_MAX_SIZE = 27
+
+
+def interleave(rank, size, iterable):
+    yield from (e for i, e in enumerate(iterable) if i % size == rank)
 
 
 def rec_to_seq_args(records, l=None, r=None):
@@ -55,6 +59,114 @@ def subamplicon(coor, results, records):
     annotations = dict(range=range, coor=coor)
     record = SeqRecord(records[i][slice(*range)].seq, id=id, annotations=annotations)
     return record
+
+
+def process_sublamps(pwork, params, data):
+    rank, size = pwork
+    optional_loop, limit, conf = params
+    rec, res = data
+    records, records1, records2 = rec
+    results1, results2, results3F1c, results3B1c, results3LF, results3LB = res
+
+    sublamps = []
+    oligo_calc = primer3.thermoanalysis.ThermoAnalysis(**conf["THERMO"])
+    stats = Counter()
+    counter = defaultdict(int)
+
+    for i in interleave(rank, size, range(len(records2))):
+        iP2, jP2 = records2[i].annotations["coor"]
+        iP3, jP3 = records1[iP2].annotations["coor"]
+        pos1 = results1[iP3][f"PRIMER_LEFT_{jP3}"][0]
+        pos2 = results1[iP3][f"PRIMER_RIGHT_{jP3}"][0] + 1
+
+        # check F2/B2 stability
+        seq = results2[iP2][f"PRIMER_LEFT_{jP2}_SEQUENCE"]
+        if oligo_calc.calc_end_stability(seq, seq).dh >= 0:
+            stats["F2:calc_end_stability"] += 1
+            continue
+        seq = rc(results2[iP2][f"PRIMER_RIGHT_{jP2}_SEQUENCE"])
+        if oligo_calc.calc_end_stability(seq, seq).dh >= 0:
+            stats["B2:calc_end_stability"] += 1
+            continue
+
+        # sort primers
+        # check LF-F1c overlap/order
+        # check F1c stability
+        result3LF, result3F1c = results3LF[i], results3F1c[i]
+        n1, n2 = result3LF["PRIMER_RIGHT_NUM_RETURNED"], result3F1c["PRIMER_RIGHT_NUM_RETURNED"]
+        F = []
+
+        if optional_loop:
+            for j2 in range(n2):
+                F1c = primer_right_normalize(result3F1c[f"PRIMER_RIGHT_{j2}"])
+                seq = result3F1c[f"PRIMER_RIGHT_{j2}_SEQUENCE"]
+                is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+                if is_stable:
+                    F.append((-1, j2))
+                else:
+                    stats["LF-F1c:unstable"] += not is_stable
+
+        for j1, j2 in product(range(n1), range(n2)):
+            LF = primer_right_normalize(result3LF[f"PRIMER_RIGHT_{j1}"])
+            F1c = primer_right_normalize(result3F1c[f"PRIMER_RIGHT_{j2}"])
+            seq = result3F1c[f"PRIMER_RIGHT_{j2}_SEQUENCE"]
+            is_ordered = sum(LF) < F1c[0]
+            is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+            if is_ordered and is_stable:
+                F.append((j1, j2))
+            else:
+                stats["LF-F1c:overlap"] += not is_ordered
+                stats["LF-F1c:unstable"] += not is_stable
+
+        if not F:
+            stats["LF-F1c:none"] += 1
+            continue
+
+        # sort primers
+        # check B1c-LB overlap/order
+        # check B1c stability
+        result3B1c, result3LB = results3B1c[i], results3LB[i]
+        n1, n2 = result3B1c["PRIMER_LEFT_NUM_RETURNED"], result3LB["PRIMER_LEFT_NUM_RETURNED"]
+        B = []
+
+        if optional_loop:
+            for j1 in range(n1):
+                B1c = result3B1c[f"PRIMER_LEFT_{j1}"]
+                seq = rc(result3B1c[f"PRIMER_LEFT_{j1}_SEQUENCE"])
+                is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+                if is_stable:
+                    B.append((j1, -1))
+                else:
+                    stats["B1c-LB:unstable"] += not is_stable
+
+        for j1, j2 in product(range(n1), range(n2)):
+            B1c = result3B1c[f"PRIMER_LEFT_{j1}"]
+            LB = result3LB[f"PRIMER_LEFT_{j2}"]
+            seq = rc(result3B1c[f"PRIMER_LEFT_{j1}_SEQUENCE"])
+            is_ordered = sum(B1c) < LB[0]
+            is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+            if is_ordered and is_stable:
+                B.append((j1, j2))
+            else:
+                stats["B1c-LB:overlap"] += not is_ordered
+                stats["B1c-LB:unstable"] += not is_stable
+
+        if not B:
+            stats["B1c-LB:none"] += 1
+
+        # check F1c-B1c distance
+        key = (records[iP3].id, pos1, pos2)
+        for f, b in product(F, B):
+            _, f2, b1, __ = *f, *b
+            F1c = result3F1c[f"PRIMER_RIGHT_{f2}"]
+            B1c = result3B1c[f"PRIMER_LEFT_{b1}"]
+            if conf["LAMP"]["F1cB1c_DIST_RANGE"][0] <= B1c[0] - sum(F1c) + 1 <= conf["LAMP"]["F1cB1c_DIST_RANGE"][1] and counter[key] < limit:
+                sublamps.append((i, f, b))
+                counter[key] += 1
+            else:
+                stats["F1c-B1c:distance"] += 1
+
+    return (sublamps, stats)
 
 
 def main_pcr(args, conf, records):
@@ -104,8 +216,6 @@ def main_pcr(args, conf, records):
 
 
 def main_lamp(args, conf, records):
-    stats = defaultdict(int)
-
     json.dump(conf, fp=sys.stderr, indent=True)
     print(file=sys.stderr)
     print(file=sys.stderr)
@@ -192,110 +302,22 @@ def main_lamp(args, conf, records):
         print(key[3:], sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3B1c), file=sys.stderr)
 
     # process combos
-    sublamps = []
-
-    oligo_calc = primer3.thermoanalysis.ThermoAnalysis(**conf["THERMO"])
-    counter = defaultdict(int)
-    for i in range(len(records2)):
-        iP2, jP2 = records2[i].annotations["coor"]
-        iP3, jP3 = records1[iP2].annotations["coor"]
-        pos1 = results1[iP3][f"PRIMER_LEFT_{jP3}"][0]
-        pos2 = results1[iP3][f"PRIMER_RIGHT_{jP3}"][0] + 1
-
-        # check F2/B2 stability
-        seq = results2[iP2][f"PRIMER_LEFT_{jP2}_SEQUENCE"]
-        if oligo_calc.calc_end_stability(seq, seq).dh >= 0:
-            stats["F2:calc_end_stability"] += 1
-            continue
-        seq = rc(results2[iP2][f"PRIMER_RIGHT_{jP2}_SEQUENCE"])
-        if oligo_calc.calc_end_stability(seq, seq).dh >= 0:
-            stats["B2:calc_end_stability"] += 1
-            continue
-
-        # sort primers
-        # check LF-F1c overlap/order
-        # check F1c stability
-        result3LF, result3F1c = results3LF[i], results3F1c[i]
-        n1, n2 = result3LF["PRIMER_RIGHT_NUM_RETURNED"], result3F1c["PRIMER_RIGHT_NUM_RETURNED"]
-        F = []
-
-        if args.optional_loop:
-            for j2 in range(n2):
-                F1c = primer_right_normalize(result3F1c[f"PRIMER_RIGHT_{j2}"])
-                seq = result3F1c[f"PRIMER_RIGHT_{j2}_SEQUENCE"]
-                is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
-                if is_stable:
-                    F.append((-1, j2))
-                else:
-                    stats["LF-F1c:unstable"] += not is_stable
-
-        for j1, j2 in product(range(n1), range(n2)):
-            LF = primer_right_normalize(result3LF[f"PRIMER_RIGHT_{j1}"])
-            F1c = primer_right_normalize(result3F1c[f"PRIMER_RIGHT_{j2}"])
-            seq = result3F1c[f"PRIMER_RIGHT_{j2}_SEQUENCE"]
-            is_ordered = sum(LF) < F1c[0]
-            is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
-            if is_ordered and is_stable:
-                F.append((j1, j2))
-            else:
-                stats["LF-F1c:overlap"] += not is_ordered
-                stats["LF-F1c:unstable"] += not is_stable
-
-        if not F:
-            stats["LF-F1c:none"] += 1
-            continue
-
-        # sort primers
-        # check B1c-LB overlap/order
-        # check B1c stability
-        result3B1c, result3LB = results3B1c[i], results3LB[i]
-        n1, n2 = result3B1c["PRIMER_LEFT_NUM_RETURNED"], result3LB["PRIMER_LEFT_NUM_RETURNED"]
-        B = []
-
-        if args.optional_loop:
-            for j1 in range(n1):
-                B1c = result3B1c[f"PRIMER_LEFT_{j1}"]
-                seq = rc(result3B1c[f"PRIMER_LEFT_{j1}_SEQUENCE"])
-                is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
-                if is_ordered and is_stable:
-                    B.append((j1, -1))
-                else:
-                    stats["B1c-LB:unstable"] += not is_stable
-
-        for j1, j2 in product(range(n1), range(n2)):
-            B1c = result3B1c[f"PRIMER_LEFT_{j1}"]
-            LB = result3LB[f"PRIMER_LEFT_{j2}"]
-            seq = rc(result3B1c[f"PRIMER_LEFT_{j1}_SEQUENCE"])
-            is_ordered = sum(B1c) < LB[0]
-            is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
-            if is_ordered and is_stable:
-                B.append((j1, j2))
-            else:
-                stats["B1c-LB:overlap"] += not is_ordered
-                stats["B1c-LB:unstable"] += not is_stable
-
-        if not B:
-            stats["B1c-LB:none"] += 1
-
-        # check F1c-B1c distance
-        key = (records[iP3].id, pos1, pos2)
-        for f, b in product(F, B):
-            _, f2, b1, __ = *f, *b
-            F1c = result3F1c[f"PRIMER_RIGHT_{f2}"]
-            B1c = result3B1c[f"PRIMER_LEFT_{b1}"]
-            if conf["LAMP"]["F1cB1c_DIST_RANGE"][0] <= B1c[0] - sum(F1c) + 1 <= conf["LAMP"]["F1cB1c_DIST_RANGE"][1] and counter[key] < args.limit:
-                sublamps.append((i, f, b))
-                counter[key] += 1
-            else:
-                stats["F1c-B1c:distance"] += 1
-
-    print(*(ele for ele in stats.items() if ele[1]), file=sys.stderr, sep="\n")
+    params = (args.optional_loop, args.limit, conf)
+    data = ((records, records1, records2), (results1, results2, results3F1c, results3B1c, results3LF, results3LB))
+    with Pool(args.proc) as pool:
+        sublamps, stats = [], Counter()
+        for ele in pool.starmap(process_sublamps, [((rank, args.proc), params, data) for rank in range(args.proc)]):
+            p, q = ele
+            print("rank>", len(p))
+            sublamps += p
+            stats += q
+        print(*(ele for ele in stats.items() if ele[1]), file=sys.stderr, sep="\n")
 
     print("output", file=sys.stderr)
     assays = []
     context = conf.get("PSET", {}).get("context", (0, 0))
     brackets = "[]", "[]", "()", "[]", "[]", "()", "[]", "[]"
-    counter.clear()
+    counter = defaultdict(int)
     for i, coor1, coor2 in sublamps:
         iP2, jP2 = records2[i].annotations["coor"]
         iP3, jP3 = records1[iP2].annotations["coor"]
