@@ -117,13 +117,13 @@ def main_lamp(args, conf, records):
         sconf, pconf = split_conf(conf[key])
         pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
         pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
-        json.dump(conf[key], fp=sys.stderr, indent=True)
+        json.dump(pconf, fp=sys.stderr, indent=True)
+        print(key)
         print(file=sys.stderr)
-
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records))
         results1 = pool.starmap(primer3.bindings.design_primers, iterable)
         records1 = [subamplicon(coor, results1, records) for coor in iter_coors(results1)]
-        print(key, len(records1), file=sys.stderr)
+        print(len(records1), file=sys.stderr)
         # Calculate F2/B2
         key = "F2B2"
         sconf, pconf = split_conf(conf[key])
@@ -133,13 +133,14 @@ def main_lamp(args, conf, records):
             "PRIMER_PRODUCT_SIZE_RANGE",
             [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records1), default=0)]
         )
-        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(key)
+        json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         dist_range = conf["LAMP"]["F3F2_DIST_RANGE"]
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records1, l=dist_range, r=dist_range))
         results2 = pool.starmap(primer3.bindings.design_primers, iterable)
         records2 = [subamplicon(coor, results2, records1) for coor in iter_coors(results2)]
-        print(key, len(records2), file=sys.stderr)
+        print(len(records2), file=sys.stderr)
         # Calculate LF
         key = "LFLB"
         sconf, pconf = split_conf(conf[key])
@@ -149,22 +150,24 @@ def main_lamp(args, conf, records):
             "PRIMER_PRODUCT_SIZE_RANGE",
             [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records2), default=0)]
         )
-        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(key[:2])
+        json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2))
         results3LF = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print(key[:2], sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3LF), file=sys.stderr)
+        print(sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3LF), file=sys.stderr)
         # Calculate F1c
         key = "F1cB1c"
         sconf, pconf = split_conf(conf[key])
         pconf["PRIMER_PICK_LEFT_PRIMER"] = 0
         pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
-        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(key[:3])
+        json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         dist_range = conf["LAMP"][f"F2F1c_DIST_RANGE"]
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2, l=dist_range))
         results3F1c = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print(key[:3], sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3F1c), file=sys.stderr)
+        print(sum(result["PRIMER_RIGHT_NUM_RETURNED"] for result in results3F1c), file=sys.stderr)
         # Calculate LB
         key = "LFLB"
         sconf, pconf = split_conf(conf[key])
@@ -174,22 +177,24 @@ def main_lamp(args, conf, records):
             "PRIMER_PRODUCT_SIZE_RANGE",
             [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records2), default=0)]
         )
-        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(key[2:])
+        json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2))
         results3LB = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print(key[2:], sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3LB), file=sys.stderr)
+        print(sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3LB), file=sys.stderr)
         # Calculate B1c
         key = "F1cB1c"
         sconf, pconf = split_conf(conf[key])
         pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
         pconf["PRIMER_PICK_RIGHT_PRIMER"] = 0
-        json.dump(conf[key], fp=sys.stderr, indent=True)
+        print(key[3:])
+        json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         dist_range = conf["LAMP"]["F2F1c_DIST_RANGE"]
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2, r=dist_range))
         results3B1c = list(pool.starmap(primer3.bindings.design_primers, iterable))
-        print(key[3:], sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3B1c), file=sys.stderr)
+        print(sum(result["PRIMER_LEFT_NUM_RETURNED"] for result in results3B1c), file=sys.stderr)
 
     # process combos
     sublamps = []
@@ -257,7 +262,7 @@ def main_lamp(args, conf, records):
                 B1c = result3B1c[f"PRIMER_LEFT_{j1}"]
                 seq = rc(result3B1c[f"PRIMER_LEFT_{j1}_SEQUENCE"])
                 is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
-                if is_ordered and is_stable:
+                if is_stable:
                     B.append((j1, -1))
                 else:
                     stats["B1c-LB:unstable"] += not is_stable
@@ -401,6 +406,7 @@ def main(argv):
     args = parse_args(argv[1:])
     conf = parse_config(args.conf, args.cstr, args.global_override)
     json.dump(conf, fp=sys.stderr, indent=True)
+    print(file=sys.stderr)
 
     # load FASTA
     with args.seqs as file:
