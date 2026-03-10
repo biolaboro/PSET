@@ -118,7 +118,7 @@ def main_lamp(args, conf, records):
         pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
         pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
         json.dump(pconf, fp=sys.stderr, indent=True)
-        print(key)
+        print(key, file=sys.stderr)
         print(file=sys.stderr)
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records))
         results1 = pool.starmap(primer3.bindings.design_primers, iterable)
@@ -133,7 +133,7 @@ def main_lamp(args, conf, records):
             "PRIMER_PRODUCT_SIZE_RANGE",
             [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records1), default=0)]
         )
-        print(key)
+        print(key, file=sys.stderr)
         json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         dist_range = conf["LAMP"]["F3F2_DIST_RANGE"]
@@ -150,7 +150,7 @@ def main_lamp(args, conf, records):
             "PRIMER_PRODUCT_SIZE_RANGE",
             [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records2), default=0)]
         )
-        print(key[:2])
+        print(key[:2], file=sys.stderr)
         json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2))
@@ -161,7 +161,7 @@ def main_lamp(args, conf, records):
         sconf, pconf = split_conf(conf[key])
         pconf["PRIMER_PICK_LEFT_PRIMER"] = 0
         pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
-        print(key[:3])
+        print(key[:3], file=sys.stderr)
         json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         dist_range = conf["LAMP"][f"F2F1c_DIST_RANGE"]
@@ -177,7 +177,7 @@ def main_lamp(args, conf, records):
             "PRIMER_PRODUCT_SIZE_RANGE",
             [pconf.get("PRIMER_MAX_SIZE", DEFAULT_PRIMER_MAX_SIZE), max(map(len, records2), default=0)]
         )
-        print(key[2:])
+        print(key[2:], file=sys.stderr)
         json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records2))
@@ -188,7 +188,7 @@ def main_lamp(args, conf, records):
         sconf, pconf = split_conf(conf[key])
         pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
         pconf["PRIMER_PICK_RIGHT_PRIMER"] = 0
-        print(key[3:])
+        print(key[3:], file=sys.stderr)
         json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         dist_range = conf["LAMP"]["F2F1c_DIST_RANGE"]
