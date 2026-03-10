@@ -200,6 +200,7 @@ def main_lamp(args, conf, records):
     sublamps = []
 
     oligo_calc = primer3.thermoanalysis.ThermoAnalysis(**conf["THERMO"])
+    es = {}
     counter = defaultdict(int)
     for i in range(len(records2)):
         iP2, jP2 = records2[i].annotations["coor"]
@@ -209,11 +210,15 @@ def main_lamp(args, conf, records):
 
         # check F2/B2 stability
         seq = results2[iP2][f"PRIMER_LEFT_{jP2}_SEQUENCE"]
-        if oligo_calc.calc_end_stability(seq, seq).dh >= 0:
+        if seq not in es:
+            es[seq] = oligo_calc.calc_end_stability(seq, seq).dh
+        if es[seq] >= 0:
             stats["F2:calc_end_stability"] += 1
             continue
         seq = rc(results2[iP2][f"PRIMER_RIGHT_{jP2}_SEQUENCE"])
-        if oligo_calc.calc_end_stability(seq, seq).dh >= 0:
+        if seq not in es:
+            es[seq] = oligo_calc.calc_end_stability(seq, seq).dh
+        if es[seq] >= 0:
             stats["B2:calc_end_stability"] += 1
             continue
 
@@ -228,7 +233,9 @@ def main_lamp(args, conf, records):
             for j2 in range(n2):
                 F1c = primer_right_normalize(result3F1c[f"PRIMER_RIGHT_{j2}"])
                 seq = result3F1c[f"PRIMER_RIGHT_{j2}_SEQUENCE"]
-                is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+                if seq not in es:
+                    es[seq] = oligo_calc.calc_end_stability(seq, seq).dh
+                is_stable = es[seq] < 0
                 if is_stable:
                     F.append((-1, j2))
                 else:
@@ -238,8 +245,10 @@ def main_lamp(args, conf, records):
             LF = primer_right_normalize(result3LF[f"PRIMER_RIGHT_{j1}"])
             F1c = primer_right_normalize(result3F1c[f"PRIMER_RIGHT_{j2}"])
             seq = result3F1c[f"PRIMER_RIGHT_{j2}_SEQUENCE"]
+            if seq not in es:
+                es[seq] = oligo_calc.calc_end_stability(seq, seq).dh
             is_ordered = sum(LF) < F1c[0]
-            is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+            is_stable = es[seq] < 0
             if is_ordered and is_stable:
                 F.append((j1, j2))
             else:
@@ -261,7 +270,9 @@ def main_lamp(args, conf, records):
             for j1 in range(n1):
                 B1c = result3B1c[f"PRIMER_LEFT_{j1}"]
                 seq = rc(result3B1c[f"PRIMER_LEFT_{j1}_SEQUENCE"])
-                is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+                if seq not in es:
+                    es[seq] = oligo_calc.calc_end_stability(seq, seq).dh
+                is_stable = es[seq] < 0
                 if is_stable:
                     B.append((j1, -1))
                 else:
@@ -271,8 +282,10 @@ def main_lamp(args, conf, records):
             B1c = result3B1c[f"PRIMER_LEFT_{j1}"]
             LB = result3LB[f"PRIMER_LEFT_{j2}"]
             seq = rc(result3B1c[f"PRIMER_LEFT_{j1}_SEQUENCE"])
+            if seq not in es:
+                es[seq] = oligo_calc.calc_end_stability(seq, seq).dh
             is_ordered = sum(B1c) < LB[0]
-            is_stable = oligo_calc.calc_end_stability(seq, seq).dh < 0
+            is_stable = es[seq] < 0
             if is_ordered and is_stable:
                 B.append((j1, j2))
             else:
