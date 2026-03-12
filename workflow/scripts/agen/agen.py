@@ -117,8 +117,8 @@ def main_lamp(args, conf, records):
         sconf, pconf = split_conf(conf[key])
         pconf["PRIMER_PICK_LEFT_PRIMER"] = 1
         pconf["PRIMER_PICK_RIGHT_PRIMER"] = 1
-        json.dump(pconf, fp=sys.stderr, indent=True)
         print(key, file=sys.stderr)
+        json.dump(pconf, fp=sys.stderr, indent=True)
         print(file=sys.stderr)
         iterable = (({**sconf, **ele}, pconf) for ele in rec_to_seq_args(records))
         results1 = pool.starmap(primer3.bindings.design_primers, iterable)
@@ -417,6 +417,11 @@ def parse_args(argv):
 def main(argv):
     # parse args/conf
     args = parse_args(argv[1:])
+
+    for key, val in vars(args).items():
+        print(key, val, sep="=", file=sys.stderr)
+    print(file=sys.stderr)
+
     conf = parse_config(args.conf, args.cstr, args.global_override)
     json.dump(conf, fp=sys.stderr, indent=True)
     print(file=sys.stderr)
