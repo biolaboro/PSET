@@ -5,9 +5,11 @@ import shlex
 import sqlite3
 import sys
 import time
+import atexit
+import signal
 from collections import Counter, namedtuple
 from pathlib import Path
-from subprocess import STDOUT, Popen
+from subprocess import STDOUT, TimeoutExpired, Popen
 from tempfile import NamedTemporaryFile
 
 
@@ -31,7 +33,7 @@ class Pool():
                 status == "FAILURE" OR
                 status == "CANCELED" OR
                 status == "DOCANCEL" OR
-                status == "UNKNOWN"
+                status == "RESUBMITTED"
             ),
             "log" TEXT DEFAULT ''
         );
@@ -61,8 +63,15 @@ class Pool():
         """initialize database connection and table"""
         # ensure table exists
         self.conn.executescript(self.SQL)
-        # set all non-SUCCESS tasks to FAILURE
-        self.conn.execute("UPDATE task SET status = 'UNKNOWN' WHERE status NOT IN ('SUCCESS', 'FAILURE', 'CANCELED');")
+        # if there were previously "RUNNING" tasks,
+        # then resubmit them as "QUEUED"
+        # and set those "RUNNING" tasks to "RESUBMITTED"
+        self.conn.execute(
+            "INSERT INTO task (id, user, args, cpu, status)"
+            "SELECT COALESCE(ROW_NUMBER() OVER () + (SELECT MAX(id) FROM task), 0) AS id, user, args, cpu, 'QUEUED' AS status FROM task WHERE status == 'RUNNING'"
+            "ORDER BY submitted;"
+        )
+        self.conn.execute("UPDATE task SET status = 'RESUBMITTED' WHERE status == 'RUNNING';")
         self.conn.commit()
 
     def _clean_task(self, ele, status):
@@ -143,12 +152,21 @@ class Pool():
         """yield the next Task that is running"""
         yield from (ele for ele in self.pool if ele.proc.poll() is None)
 
+    def cleanup(self):
+        """"for cleanup with atexit"""
+        for ele in self.running():
+            ele.proc.terminate()
+            try:
+                ele.proc.wait(timeout=3)
+            except TimeoutExpired:
+                ele.proc.kill()
+
     def status(self):
         return self.available(), self.cpu, list(self.conn.execute("SELECT * FROM TASK ORDER BY submitted;"))
 
     def status_print(self):
         """print status"""
-        print(f"cpu: {self.available()} + {sum(1 for _ in self.running())} = {self.cpu}")
+        print(f"{self.cpu - self.available()} / {self.cpu} CPU running {sum(1 for _ in self.running())} jobs")
         for ele in self.pool:
             print(ele.row.id, ele.proc.returncode, self.logs[ele.row.id].name, os.path.exists(self.logs[ele.row.id].name))
 
@@ -187,8 +205,21 @@ def parse_args(args):
 def main(argv):
     args = parse_args(argv[1:])
     print(args)
-    Pool(args.db, args.cmd, wd=args.wd, cpu=min(args.cpu, os.cpu_count()), lag=args.lag, lim=args.lim, old=args.old).run()
+    try:
+        pool = Pool(args.db, args.cmd, wd=args.wd, cpu=min(args.cpu, os.cpu_count()), lag=args.lag, lim=args.lim, old=args.old)
+        atexit.register(pool.cleanup)
+        pool.run()
+    finally:
+        pass
+
+    return 0
+
+
+def signal_handler(sig, frame):
+    sys.exit(0)
 
 
 if __name__ == "__main__":
-    main(sys.argv)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    sys.exit(main(sys.argv))

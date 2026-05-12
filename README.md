@@ -104,7 +104,7 @@ At the **DOWNLOAD** tab, click the **listing** button at the top left. This will
 ### GENERATE
 
 For this example, extract accession NC_024781.1 from the EBOV BLAST database (or, download directly from NCBI) into a FASTA file.
-```
+```bash
 mkdir -p resources/fasta
 blastdbcmd -db resources/blast/EBOV/EBOV -entry NC_024781.1 > resources/fasta/NC_024781.1.fna
 ```
@@ -128,7 +128,7 @@ Task status:
 |FAILURE|the task failed and returned an error code|
 |CANCELED|the user cancelled the task|
 |DOCANCEL|the user requested to cancel the task|
-|UNKNOWN|the task completed, but success or failure is unknown, likely due to restarting the pool|
+|RESUBMITTED|the task that was previously running was automatically resubmitted on start-up|
 
 ## Example: CLI
 

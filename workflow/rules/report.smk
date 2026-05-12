@@ -36,9 +36,9 @@ rule tab_confusion:
     input:
         jsn=expand(rules.call.output.jsn, id=assays),
     output:
-        tsv=report(root / "con.tsv"),
+        tsv=report(root / "mat.tsv"),
     params:
-        script=base / "scripts" / "report" / "con.jq",
+        script=base / "scripts" / "report" / "mat.jq",
     shell:
         """
         {{
