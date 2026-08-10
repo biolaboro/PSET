@@ -12,6 +12,8 @@ services:
       - ../workflow/:/opt/workflow
     ports:
       - 8000:8000
+    environment:
+      ADMIN_LINK: https://github.com/biolaboro
 
   pool:
     build:

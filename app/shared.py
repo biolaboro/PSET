@@ -29,6 +29,7 @@ DPI_APP = 96
 DPI_PLOT = 300
 USER_KEY = "user"  # this holds the header key to retrieve the user id
 USER_DEFAULT = "user"  # this is the default user id value if not in the header
+ADMIN_LINK = os.getenv("ADMIN_LINK", "https://github.com/biolaboro/PSET") # the link to the external login page for admins
 
 
 def add_key(df, col="id", key_name="key", key_values=ascii_uppercase):

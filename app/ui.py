@@ -215,18 +215,7 @@ app_ui = ui.page_fluid(
                 ui.output_data_frame("taxa_table"),
             ),
         ),
-        ui.nav_panel(
-            "POOL",
-            ui.navset_tab(
-                ui.nav_panel("pool_status", ui.output_data_frame("pool")),
-                ui.nav_panel(
-                    "pool_log",
-                    autoscrollify(ui.input_text_area("log", None, rows=25, width="100%", spellcheck=False)),
-                    ui.input_action_button("cancel_task", "cancel", width="100%"),
-                ),
-                id="pool_nav"
-            ),
-        ),
+        ui.nav_control(ui.input_action_link("admin_nav", "ADMIN")),
         id="tabs",
     )
 )

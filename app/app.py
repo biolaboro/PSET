@@ -775,5 +775,22 @@ def server(input, output, session):
             value = (line for line in df.log.iloc[0].split("\n") if "SyntaxWarning: invalid escape sequence '\\('" not in line)
             ui.update_text_area("log", value="\n".join(value))
 
+    @reactive.effect
+    @reactive.event(input.admin_nav)
+    def show_important_message():
+        m = ui.modal(
+            ui.p(
+                "Click here to ",
+                ui.a(
+                    "login.",
+                    href=ADMIN_LINK,
+                    target="_blank",
+                ),
+            ),
+            title="Admin Login Link",
+            easy_close=True,
+        )
+        ui.modal_show(m)
+
 
 app = App(app_ui, server)
