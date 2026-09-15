@@ -32,7 +32,7 @@ while read -r a b; do
         [[ "$a" != "$c" || "$b" != "$d" ]] && echo "$b"
     else
         # re-download if md5 missing
-        echo -n "$b"
+        echo "$b"
     fi
 done > down.txt
 # down.txt containes names of the tar.gz files to download
